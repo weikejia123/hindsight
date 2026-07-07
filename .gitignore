@@ -72,3 +72,7 @@ hindsight-integrations/_drafts/
 
 blog-post*
 .worktrees/
+
+# my-docker/
+my-docker/.env
+my-docker-vol/
