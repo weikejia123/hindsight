@@ -557,6 +557,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # Validate provider
         valid_providers = [
             "openai",
+            "openai-responses",
             "groq",
             "ollama",
             "ollama-cloud",
@@ -618,6 +619,7 @@ class OpenAICompatibleLLM(LLMInterface):
             self.provider
             in (
                 "openai",
+                "openai-responses",
                 "groq",
                 "minimax",
                 "deepseek",
