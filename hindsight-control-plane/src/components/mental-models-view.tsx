@@ -102,6 +102,7 @@ interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    keep_trace?: boolean;
   };
   last_refreshed_at: string;
   created_at: string;
@@ -791,6 +792,7 @@ function CreateMentalModelDialog({
         includeChunks: "",
         recallMaxTokens: "",
         recallChunksMaxTokens: "",
+        keepTrace: false,
       });
       onCreated();
     } catch (error) {
@@ -822,6 +824,7 @@ function CreateMentalModelDialog({
             includeChunks: "",
             recallMaxTokens: "",
             recallChunksMaxTokens: "",
+            keepTrace: false,
           });
           onClose();
         }
