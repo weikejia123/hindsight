@@ -7429,6 +7429,8 @@ components:
             fact_types:
             - world
             - world
+            response_schema:
+              key: ""
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
@@ -7467,6 +7469,8 @@ components:
             fact_types:
             - world
             - world
+            response_schema:
+              key: ""
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
@@ -7516,6 +7520,8 @@ components:
           fact_types:
           - world
           - world
+          response_schema:
+            key: ""
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
@@ -7664,6 +7670,9 @@ components:
         recall_chunks_max_tokens:
           nullable: true
           type: integer
+        response_schema:
+          additionalProperties: {}
+          nullable: true
       title: MentalModelTrigger
     MentalModelTrigger-Output:
       description: Trigger settings for a mental model.
@@ -7684,6 +7693,8 @@ components:
         fact_types:
         - world
         - world
+        response_schema:
+          key: ""
         exclude_mental_model_ids:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
@@ -7757,6 +7768,9 @@ components:
         recall_chunks_max_tokens:
           nullable: true
           type: integer
+        response_schema:
+          additionalProperties: {}
+          nullable: true
       title: MentalModelTrigger
     MinScores:
       description: |-
