@@ -1093,6 +1093,27 @@ enum MentalModelCommands {
         mental_model_id: String,
     },
 
+    /// Preview a refresh without changing the mental model
+    DryRunRefresh {
+        /// Bank ID
+        bank_id: String,
+
+        /// Mental model ID
+        mental_model_id: String,
+
+        /// Override the refresh mode for this run: full or delta
+        #[arg(long = "mode")]
+        mode: Option<String>,
+
+        /// Override how the model's tags filter memories for this run
+        #[arg(long = "tags-match")]
+        tags_match: Option<String>,
+
+        /// Override the query reflect answers for this run
+        #[arg(long = "source-query")]
+        source_query: Option<String>,
+    },
+
     /// Get the change history of a mental model
     History {
         /// Bank ID
@@ -1743,6 +1764,22 @@ fn run() -> Result<()> {
                 &client,
                 &bank_id,
                 &mental_model_id,
+                verbose,
+                output_format,
+            ),
+            MentalModelCommands::DryRunRefresh {
+                bank_id,
+                mental_model_id,
+                mode,
+                tags_match,
+                source_query,
+            } => commands::mental_model::dry_run_refresh(
+                &client,
+                &bank_id,
+                &mental_model_id,
+                mode,
+                tags_match,
+                source_query,
                 verbose,
                 output_format,
             ),

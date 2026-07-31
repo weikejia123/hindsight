@@ -19,6 +19,7 @@ import {
   FileText,
   History as HistoryIcon,
   Settings,
+  Stethoscope,
   ChevronLeft,
   ChevronRight,
   MoreVertical,
@@ -32,6 +33,7 @@ import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
+import { MentalModelDiagnosticsView } from "./mental-model-diagnostics-view";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -626,7 +628,7 @@ interface MentalModelDetailModalProps {
   onDelete?: (m: MentalModel) => void;
   onClear?: (m: MentalModel) => void;
   onRefreshed?: (m: MentalModel) => void;
-  initialTab?: "content" | "configuration" | "history";
+  initialTab?: "content" | "configuration" | "diagnostics" | "history";
 }
 
 export function MentalModelDetailModal({
@@ -643,7 +645,9 @@ export function MentalModelDetailModal({
   const [mentalModel, setMentalModel] = useState<MentalModel | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"content" | "configuration" | "history">(initialTab);
+  const [activeTab, setActiveTab] = useState<
+    "content" | "configuration" | "diagnostics" | "history"
+  >(initialTab);
   const [refreshing, setRefreshing] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [viewMemoryId, setViewMemoryId] = useState<string | null>(null);
@@ -801,11 +805,13 @@ export function MentalModelDetailModal({
           ) : mentalModel ? (
             <Tabs
               value={activeTab}
-              onValueChange={(v) => setActiveTab(v as "content" | "configuration" | "history")}
+              onValueChange={(v) =>
+                setActiveTab(v as "content" | "configuration" | "diagnostics" | "history")
+              }
               className="flex-1 flex flex-col overflow-hidden"
             >
               <div className="flex items-center justify-between gap-2">
-                <TabsList className="grid grid-cols-3 w-full max-w-md">
+                <TabsList className="grid grid-cols-4 w-full max-w-xl">
                   <TabsTrigger value="content" className="flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5" />
                     {t("tabContent")}
@@ -813,6 +819,10 @@ export function MentalModelDetailModal({
                   <TabsTrigger value="configuration" className="flex items-center gap-1.5">
                     <Settings className="w-3.5 h-3.5" />
                     {t("tabConfiguration")}
+                  </TabsTrigger>
+                  <TabsTrigger value="diagnostics" className="flex items-center gap-1.5">
+                    <Stethoscope className="w-3.5 h-3.5" />
+                    {t("tabDiagnostics")}
                   </TabsTrigger>
                   <TabsTrigger value="history" className="flex items-center gap-1.5">
                     <HistoryIcon className="w-3.5 h-3.5" />
@@ -926,6 +936,10 @@ export function MentalModelDetailModal({
 
                 <TabsContent value="configuration" className="mt-0">
                   <ConfigurationTab mentalModel={mentalModel} />
+                </TabsContent>
+
+                <TabsContent value="diagnostics" className="mt-0">
+                  <MentalModelDiagnosticsView mentalModel={mentalModel} />
                 </TabsContent>
 
                 <TabsContent value="history" className="mt-0">

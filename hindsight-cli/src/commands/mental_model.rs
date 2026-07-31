@@ -23,6 +23,16 @@ fn parse_tags_match(value: &str) -> Result<types::TagsMatch> {
     })
 }
 
+/// Parse a --mode string into the refresh-mode override, rejecting unknown
+/// values so a typo fails loudly instead of silently previewing the wrong mode.
+fn parse_refresh_mode(value: &str) -> Result<types::Mode> {
+    Ok(match value.to_lowercase().as_str() {
+        "full" => types::Mode::Full,
+        "delta" => types::Mode::Delta,
+        other => anyhow::bail!("invalid --mode '{other}': expected one of full, delta"),
+    })
+}
+
 /// List mental models for a bank
 pub fn list(
     client: &ApiClient,
@@ -148,6 +158,7 @@ pub fn create(
             include_chunks: None,
             recall_max_tokens: None,
             recall_chunks_max_tokens: None,
+            keep_trace: false,
         })
     } else {
         None
@@ -227,6 +238,7 @@ pub fn update(
         include_chunks: None,
         recall_max_tokens: None,
         recall_chunks_max_tokens: None,
+        keep_trace: false,
     });
 
     let request = types::UpdateMentalModelRequest {
@@ -344,6 +356,110 @@ pub fn refresh(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Preview a mental model refresh without changing anything.
+///
+/// Runs the real refresh pipeline and reports what it would do — which mode it
+/// ended up in and why, the scope and window it read, how many facts retrieval
+/// returned versus how many the agent used, and a diff of the content it would
+/// write. Nothing is persisted, so repeating it reads the same window again.
+#[allow(clippy::too_many_arguments)]
+pub fn dry_run_refresh(
+    client: &ApiClient,
+    bank_id: &str,
+    mental_model_id: &str,
+    mode: Option<String>,
+    tags_match: Option<String>,
+    source_query: Option<String>,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    let overrides = types::MentalModelRefreshOverrides {
+        mode: mode.as_deref().map(parse_refresh_mode).transpose()?,
+        tags_match: tags_match.as_deref().map(parse_tags_match).transpose()?,
+        source_query,
+        ..Default::default()
+    };
+
+    let spinner = if output_format == OutputFormat::Pretty {
+        // The dry run makes the same LLM calls a refresh does, so it is not quick.
+        Some(ui::create_spinner("Running refresh dry run..."))
+    } else {
+        None
+    };
+
+    let response = client.dry_run_refresh_mental_model(bank_id, mental_model_id, &overrides, verbose);
+
+    if let Some(mut sp) = spinner {
+        sp.finish();
+    }
+
+    match response {
+        Ok(result) => {
+            if output_format != OutputFormat::Pretty {
+                return output::print_output(&result, output_format);
+            }
+
+            println!();
+            if result.requested_mode.to_string() == result.effective_mode.to_string() {
+                println!("  {} {}", ui::dim("Mode:"), result.effective_mode);
+            } else {
+                println!(
+                    "  {} {} → {}",
+                    ui::dim("Mode:"),
+                    result.requested_mode,
+                    result.effective_mode
+                );
+            }
+            if let Some(reason) = &result.mode_fallback_reason {
+                println!("  {} {}", ui::dim("Fell back:"), reason);
+            }
+            println!("  {} {}", ui::dim("Outcome:"), result.outcome);
+            println!("  {} {}", ui::dim("Would save:"), result.would_persist);
+            println!(
+                "  {} {}",
+                ui::dim("Retrieved:"),
+                format_counts(&result.facts.retrieved)
+            );
+            println!("  {} {}", ui::dim("Used:"), format_counts(&result.facts.used));
+            if let Some(ops) = &result.delta_operations {
+                println!(
+                    "  {} {} applied, {} skipped",
+                    ui::dim("Delta ops:"),
+                    ops.applied.len(),
+                    ops.skipped.len()
+                );
+            }
+            println!("  {} {} ms", ui::dim("Duration:"), result.duration_ms);
+
+            for warning in &result.warnings {
+                println!();
+                ui::print_warning(warning);
+            }
+
+            println!();
+            if result.diff.is_empty() {
+                println!("{}", ui::dim("No content change."));
+            } else {
+                println!("{}", result.diff);
+            }
+            println!();
+            println!("{}", ui::dim("Nothing was saved. Use 'mental-model refresh' to apply."));
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Render a fact-type → count map as "observation: 12, world: 3".
+fn format_counts(counts: &std::collections::HashMap<String, i64>) -> String {
+    if counts.is_empty() {
+        return "none".to_string();
+    }
+    let mut entries: Vec<String> = counts.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+    entries.sort();
+    entries.join(", ")
 }
 
 /// Get the change history of a mental model

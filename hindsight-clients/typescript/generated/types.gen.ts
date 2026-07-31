@@ -2266,6 +2266,26 @@ export type KnowledgeTreeResponse = {
 };
 
 /**
+ * LLMCallTrace
+ *
+ * A single LLM call made during reflect.
+ */
+export type LlmCallTrace = {
+  /**
+   * Scope
+   *
+   * Call scope: agent_1, agent_2, final, etc.
+   */
+  scope: string;
+  /**
+   * Duration Ms
+   *
+   * Execution time in milliseconds
+   */
+  duration_ms: number;
+};
+
+/**
  * LLMRequestEntry
  *
  * A single LLM request trace row, as returned by the read API.
@@ -2740,6 +2760,179 @@ export type MemoryTimeseriesBucket = {
 };
 
 /**
+ * MentalModelDeltaOperations
+ *
+ * Structured operations a delta refresh emitted against the existing document.
+ */
+export type MentalModelDeltaOperations = {
+  /**
+   * Applied
+   *
+   * Operations applied to the document, in order.
+   */
+  applied?: Array<{
+    [key: string]: unknown;
+  }>;
+  /**
+   * Skipped
+   *
+   * Operations dropped as invalid, each with a reason.
+   */
+  skipped?: Array<{
+    [key: string]: unknown;
+  }>;
+};
+
+/**
+ * MentalModelDryRunRefreshResult
+ *
+ * Preview of what a mental model refresh would do, having changed nothing.
+ *
+ * Runs the real pipeline — same scope resolution, same reflect call, same
+ * delta operations — then reports the result instead of persisting it. The
+ * model's content, structured content, watermark, and last_refreshed_at are
+ * all left untouched, so a delta dry run is repeatable: it reads the same
+ * window the next real refresh would.
+ */
+export type MentalModelDryRunRefreshResult = {
+  /**
+   * Mental Model Id
+   *
+   * The mental model previewed.
+   */
+  mental_model_id: string;
+  /**
+   * Name
+   *
+   * Display name of the mental model.
+   */
+  name: string;
+  /**
+   * Requested Mode
+   *
+   * The mode asked for (from the model's trigger, or overridden).
+   */
+  requested_mode: "full" | "delta";
+  /**
+   * Effective Mode
+   *
+   * The mode the refresh actually ran in.
+   */
+  effective_mode: "full" | "delta";
+  /**
+   * Mode Fallback Reason
+   *
+   * Why delta was requested but not applied, if that happened.
+   */
+  mode_fallback_reason?:
+    | "no_baseline_content"
+    | "source_query_changed"
+    | "structured_doc_unreadable"
+    | "delta_ops_failed"
+    | null;
+  /**
+   * Outcome
+   *
+   * What a real refresh would do with the document.
+   */
+  outcome: "content_written" | "content_preserved_no_new_facts" | "refresh_failed_empty_candidate";
+  /**
+   * Would Persist
+   *
+   * Whether a real refresh would write new content.
+   */
+  would_persist: boolean;
+  /**
+   * The resolved memory scope.
+   */
+  scope: MentalModelRefreshScope;
+  /**
+   * The snapshot window read from.
+   */
+  window: MentalModelRefreshWindow;
+  /**
+   * Facts retrieved versus actually used.
+   */
+  facts: MentalModelFactCounts;
+  /**
+   * Current Content
+   *
+   * The model's content as it stands now.
+   */
+  current_content: string;
+  /**
+   * Candidate Content
+   *
+   * Raw reflect synthesis, before any delta operations.
+   */
+  candidate_content: string;
+  /**
+   * Preview Content
+   *
+   * The content a real refresh would store: the delta-edited document, or the candidate in full mode.
+   */
+  preview_content: string;
+  /**
+   * Diff
+   *
+   * Unified diff from current_content to preview_content. Empty when identical.
+   */
+  diff: string;
+  /**
+   * Structured operations emitted, in delta mode.
+   */
+  delta_operations?: MentalModelDeltaOperations | null;
+  /**
+   * Execution trace of the run, always included for a dry run.
+   */
+  trace: MentalModelRefreshTrace;
+  /**
+   * Token usage across the run's LLM calls.
+   */
+  usage?: TokenUsage;
+  /**
+   * Duration Ms
+   *
+   * Wall-clock duration of the run.
+   */
+  duration_ms?: number;
+  /**
+   * Warnings
+   *
+   * Conditions worth a human's attention, in plain language.
+   */
+  warnings?: Array<string>;
+};
+
+/**
+ * MentalModelFactCounts
+ *
+ * Facts the refresh saw, keyed by fact type.
+ *
+ * ``retrieved`` and ``used`` diverging is the single most common cause of a
+ * disappointing refresh: recall found plenty, but the reflect agent declared
+ * none of it relevant to the topic, so none of it reached the document.
+ */
+export type MentalModelFactCounts = {
+  /**
+   * Retrieved
+   *
+   * Facts the reflect agent's tool calls returned, by fact type.
+   */
+  retrieved?: {
+    [key: string]: number;
+  };
+  /**
+   * Used
+   *
+   * Facts the agent declared it actually based the answer on, by fact type.
+   */
+  used?: {
+    [key: string]: number;
+  };
+};
+
+/**
  * MentalModelListResponse
  *
  * Response model for listing mental models.
@@ -2749,6 +2942,241 @@ export type MentalModelListResponse = {
    * Items
    */
   items: Array<MentalModelResponse>;
+};
+
+/**
+ * MentalModelRefreshOverrides
+ *
+ * Per-run overrides for a mental model refresh.
+ *
+ * Only meaningful for the dry run, which uses them to A/B a candidate
+ * configuration against the model's stored one without editing the model.
+ * Every field defaults to None, meaning "use the model's stored setting".
+ */
+export type MentalModelRefreshOverrides = {
+  /**
+   * Mode
+   *
+   * Override the refresh mode (full or delta).
+   */
+  mode?: "full" | "delta" | null;
+  /**
+   * Source Query
+   *
+   * Override the query reflect answers.
+   */
+  source_query?: string | null;
+  /**
+   * Tags
+   *
+   * Override the model's tags.
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * Override how tags filter memories.
+   */
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
+  /**
+   * Tag Groups
+   *
+   * Override with compound boolean tag expressions.
+   */
+  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  /**
+   * Fact Types
+   *
+   * Override which fact types reflect retrieves.
+   */
+  fact_types?: Array<"world" | "experience" | "observation"> | null;
+  /**
+   * Exclude Mental Models
+   *
+   * Override whether other mental models are excluded from the reflect loop.
+   */
+  exclude_mental_models?: boolean | null;
+  /**
+   * Max Tokens
+   *
+   * Override the synthesis token cap.
+   */
+  max_tokens?: number | null;
+  /**
+   * Include Chunks
+   *
+   * Override whether the internal recall returns raw chunk text.
+   */
+  include_chunks?: boolean | null;
+  /**
+   * Recall Max Tokens
+   *
+   * Override the fact token budget for recall.
+   */
+  recall_max_tokens?: number | null;
+  /**
+   * Recall Chunks Max Tokens
+   *
+   * Override the raw-chunk token budget for recall.
+   */
+  recall_chunks_max_tokens?: number | null;
+};
+
+/**
+ * MentalModelRefreshScope
+ *
+ * The memory scope a refresh actually resolved to.
+ *
+ * A model's stored ``tags`` are not what filters memories — ``tags_match``
+ * defaults to ``all_strict`` when tags are present, and ``tag_groups``
+ * override flat tags entirely. This reports the resolved result.
+ */
+export type MentalModelRefreshScope = {
+  /**
+   * Tags
+   *
+   * Flat tags used to filter memories (null when unused).
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * Resolved tag match mode.
+   */
+  tags_match: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  /**
+   * Tag Groups
+   *
+   * Compound tag expressions used instead of flat tags, when set.
+   */
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
+  > | null;
+  /**
+   * Fact Types
+   *
+   * Fact types retrieved (null means all).
+   */
+  fact_types?: Array<string> | null;
+  /**
+   * Exclude Mental Models
+   *
+   * Whether other mental models were excluded from the reflect loop.
+   */
+  exclude_mental_models: boolean;
+  /**
+   * Exclude Mental Model Ids
+   *
+   * Mental models excluded by ID (always includes the model being refreshed).
+   */
+  exclude_mental_model_ids?: Array<string>;
+};
+
+/**
+ * MentalModelRefreshTrace
+ *
+ * Execution trace of a mental model refresh, recorded when trigger.keep_trace is on.
+ */
+export type MentalModelRefreshTrace = {
+  /**
+   * Recorded At
+   *
+   * When this trace was recorded.
+   */
+  recorded_at?: string | null;
+  /**
+   * Effective Mode
+   *
+   * Whether the refresh ran as full or delta.
+   */
+  effective_mode: "full" | "delta";
+  /**
+   * Mode Fallback Reason
+   *
+   * Why delta was requested but not applied, if that happened.
+   */
+  mode_fallback_reason?:
+    | "no_baseline_content"
+    | "source_query_changed"
+    | "structured_doc_unreadable"
+    | "delta_ops_failed"
+    | null;
+  /**
+   * Outcome
+   *
+   * What the refresh did with the document.
+   */
+  outcome: "content_written" | "content_preserved_no_new_facts" | "refresh_failed_empty_candidate";
+  /**
+   * The resolved memory scope.
+   */
+  scope?: MentalModelRefreshScope | null;
+  /**
+   * The snapshot window read from.
+   */
+  window?: MentalModelRefreshWindow | null;
+  /**
+   * Facts retrieved versus actually used.
+   */
+  facts?: MentalModelFactCounts;
+  /**
+   * Tool Calls
+   *
+   * Reflect tool calls made during the refresh.
+   */
+  tool_calls?: Array<MentalModelTraceToolCall>;
+  /**
+   * Llm Calls
+   *
+   * LLM calls made during the refresh.
+   */
+  llm_calls?: Array<LlmCallTrace>;
+  /**
+   * Structured operations emitted, in delta mode.
+   */
+  delta_operations?: MentalModelDeltaOperations | null;
+  /**
+   * Token usage across the refresh's LLM calls.
+   */
+  usage?: TokenUsage | null;
+  /**
+   * Duration Ms
+   *
+   * Wall-clock duration of the refresh.
+   */
+  duration_ms?: number;
+  /**
+   * Warnings
+   *
+   * Conditions worth a human's attention, in plain language.
+   */
+  warnings?: Array<string>;
+};
+
+/**
+ * MentalModelRefreshWindow
+ *
+ * The time window a refresh read memories from.
+ */
+export type MentalModelRefreshWindow = {
+  /**
+   * Created After
+   *
+   * Lower bound on memory creation time. Set only in delta mode, where it is the model's last_refreshed_at — so a delta refresh only sees memories newer than the last one.
+   */
+  created_after?: string | null;
+  /**
+   * Created Before
+   *
+   * Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.
+   */
+  created_before: string;
+  /**
+   * Watermark
+   *
+   * The last_refreshed_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible.
+   */
+  watermark?: string | null;
 };
 
 /**
@@ -2810,6 +3238,57 @@ export type MentalModelResponse = {
    * True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full.
    */
   is_stale?: boolean | null;
+};
+
+/**
+ * MentalModelTraceToolCall
+ *
+ * One reflect tool call made during a refresh.
+ *
+ * Tool *outputs* are deliberately reduced to ``result_count``: a refresh trace
+ * is persisted on the model row and re-read on every fetch, so embedding full
+ * recall payloads would bloat it without bound. Raw prompts and responses are
+ * available separately via LLM request tracing.
+ */
+export type MentalModelTraceToolCall = {
+  /**
+   * Tool
+   *
+   * Tool name: recall, search_observations, get_mental_model, expand, …
+   */
+  tool: string;
+  /**
+   * Reason
+   *
+   * The agent's stated reason for the call.
+   */
+  reason?: string | null;
+  /**
+   * Input
+   *
+   * Tool input parameters.
+   */
+  input?: {
+    [key: string]: unknown;
+  };
+  /**
+   * Result Count
+   *
+   * Number of items the tool returned, when countable.
+   */
+  result_count?: number | null;
+  /**
+   * Duration Ms
+   *
+   * Execution time in milliseconds.
+   */
+  duration_ms: number;
+  /**
+   * Iteration
+   *
+   * Agent loop iteration (1-based) this call belongs to.
+   */
+  iteration?: number;
 };
 
 /**
@@ -2884,6 +3363,12 @@ export type MentalModelTriggerInput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Keep Trace
+   *
+   * If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.
+   */
+  keep_trace?: boolean;
 };
 
 /**
@@ -2960,6 +3445,12 @@ export type MentalModelTriggerOutput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Keep Trace
+   *
+   * If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.
+   */
+  keep_trace?: boolean;
 };
 
 /**
@@ -5592,6 +6083,48 @@ export type RefreshMentalModelResponses = {
 
 export type RefreshMentalModelResponse =
   RefreshMentalModelResponses[keyof RefreshMentalModelResponses];
+
+export type DryRunRefreshMentalModelData = {
+  body?: MentalModelRefreshOverrides;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Mental Model Id
+     */
+    mental_model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh";
+};
+
+export type DryRunRefreshMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DryRunRefreshMentalModelError =
+  DryRunRefreshMentalModelErrors[keyof DryRunRefreshMentalModelErrors];
+
+export type DryRunRefreshMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelDryRunRefreshResult;
+};
+
+export type DryRunRefreshMentalModelResponse =
+  DryRunRefreshMentalModelResponses[keyof DryRunRefreshMentalModelResponses];
 
 export type ClearMentalModelData = {
   body?: never;

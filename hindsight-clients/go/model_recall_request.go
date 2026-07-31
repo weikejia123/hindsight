@@ -34,7 +34,7 @@ type RecallRequest struct {
 	Tags []string `json:"tags,omitempty"`
 	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.
 	TagsMatch *string `json:"tags_match,omitempty"`
-	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
+	TagGroups []MentalModelRefreshOverridesTagGroupsInner `json:"tag_groups,omitempty"`
 	MinScores NullableMinScores `json:"min_scores,omitempty"`
 }
 
@@ -399,9 +399,9 @@ func (o *RecallRequest) SetTagsMatch(v string) {
 }
 
 // GetTagGroups returns the TagGroups field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *RecallRequest) GetTagGroups() []MentalModelTriggerInputTagGroupsInner {
+func (o *RecallRequest) GetTagGroups() []MentalModelRefreshOverridesTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerInputTagGroupsInner
+		var ret []MentalModelRefreshOverridesTagGroupsInner
 		return ret
 	}
 	return o.TagGroups
@@ -410,7 +410,7 @@ func (o *RecallRequest) GetTagGroups() []MentalModelTriggerInputTagGroupsInner {
 // GetTagGroupsOk returns a tuple with the TagGroups field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *RecallRequest) GetTagGroupsOk() ([]MentalModelTriggerInputTagGroupsInner, bool) {
+func (o *RecallRequest) GetTagGroupsOk() ([]MentalModelRefreshOverridesTagGroupsInner, bool) {
 	if o == nil || IsNil(o.TagGroups) {
 		return nil, false
 	}
@@ -426,8 +426,8 @@ func (o *RecallRequest) HasTagGroups() bool {
 	return false
 }
 
-// SetTagGroups gets a reference to the given []MentalModelTriggerInputTagGroupsInner and assigns it to the TagGroups field.
-func (o *RecallRequest) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner) {
+// SetTagGroups gets a reference to the given []MentalModelRefreshOverridesTagGroupsInner and assigns it to the TagGroups field.
+func (o *RecallRequest) SetTagGroups(v []MentalModelRefreshOverridesTagGroupsInner) {
 	o.TagGroups = v
 }
 

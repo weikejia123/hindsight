@@ -60,6 +60,8 @@ import type {
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelRefreshOverrides,
+  MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
 } from "../generated/types.gen";
@@ -948,6 +950,33 @@ export class HindsightClient {
   }
 
   /**
+   * Preview what a refresh would do to a mental model without changing it.
+   *
+   * Runs the real pipeline — same scope resolution, same reflect call, same delta
+   * operations — and reports the mode it ran in and why, the scope and window it
+   * read, how many facts retrieval returned versus how many were used, and a diff
+   * from the stored content to the content it would write. Nothing is persisted,
+   * so a delta dry run reads the same window the next real refresh will.
+   *
+   * Costs the same LLM tokens as a real refresh.
+   */
+  async dryRunRefreshMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    overrides?: MentalModelRefreshOverrides,
+    options?: { signal?: AbortSignal }
+  ): Promise<MentalModelDryRunRefreshResult> {
+    const response = await sdk.dryRunRefreshMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+      body: overrides ?? {},
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "dryRunRefreshMentalModel");
+  }
+
+  /**
    * Clear a mental model's content so the next refresh performs a full re-synthesis.
    */
   async clearMentalModel(
@@ -1185,6 +1214,8 @@ export type {
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelRefreshOverrides,
+  MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
 };

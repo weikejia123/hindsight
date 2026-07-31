@@ -126,6 +126,20 @@ http_config = "Advanced HTTP customisation (headers/method/timeout/params) is no
 [fields.update_webhook]
 http_config = "Advanced HTTP customisation (headers/method/timeout/params) is not exposed in the CLI yet; use the JSON API if needed."
 
+[fields.dry_run_refresh_mental_model]
+# The dry run's purpose is to explain a refresh, so the flags cover the overrides
+# you reach for while troubleshooting: --mode, --tags-match and --source-query.
+# The rest are rarely the thing under suspicion and are better set on the model
+# itself, then previewed with a plain dry run.
+tags = "Set on the model with `mental-model update --tags`, then preview."
+tag_groups = "Nested boolean expression; set on the model and preview."
+fact_types = "Set on the model with `mental-model update`, then preview."
+exclude_mental_models = "Set on the model, then preview."
+max_tokens = "Set on the model with `mental-model update --max-tokens`, then preview."
+include_chunks = "Recall tuning knob; set on the model, then preview."
+recall_max_tokens = "Recall tuning knob; set on the model, then preview."
+recall_chunks_max_tokens = "Recall tuning knob; set on the model, then preview."
+
 [fields.recall_memories]
 types = "CLI exposes this as --fact-type (the schema property is named `types` but it holds fact types)."
 include = "Flattened into --include-chunks / --chunk-max-tokens (facts are always included)."

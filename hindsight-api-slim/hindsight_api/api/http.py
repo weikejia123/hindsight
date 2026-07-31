@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Literal, TypeVar
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 
 from hindsight_api.api import page_markdown
@@ -156,6 +156,10 @@ from hindsight_api.engine.memory_engine import (
     RetainOperationConflictError,
     _current_schema,
     _get_tiktoken_encoding,
+)
+from hindsight_api.engine.mental_model_refresh import (
+    MentalModelDryRunRefreshResult,
+    MentalModelRefreshOverrides,
 )
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.reflect import ReflectToolCallError
@@ -2109,6 +2113,18 @@ class MentalModelTrigger(BaseModel):
         description=(
             "Override the token budget for raw chunks returned by the internal recall during refresh. "
             "None means use the bank/global config default (recall_chunks_max_tokens)."
+        ),
+    )
+    keep_trace: bool = Field(
+        default=False,
+        description=(
+            "If true, every refresh of this mental model records how it reached its result under "
+            "reflect_response.trace: the mode it ran in and why, the resolved scope and time window, "
+            "how many facts retrieval returned versus how many the agent used, the tool and LLM calls, "
+            "and any delta operations. Only the latest refresh's trace is kept. This is the only way to "
+            "diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those "
+            "run. Tool outputs are reduced to result counts to keep the stored trace bounded; use "
+            "LLM request tracing for raw prompts and responses."
         ),
     )
 
@@ -5138,6 +5154,66 @@ def _register_routes(app: FastAPI):
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
                 f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh: {error_detail}"
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh",
+        response_model=MentalModelDryRunRefreshResult,
+        summary="Dry-run mental model refresh (preview, no persistence)",
+        description=(
+            "Preview what a refresh would do to this mental model WITHOUT changing it — no content, "
+            "structured document, watermark, or last_refreshed_at is written. Returns the mode the "
+            "refresh ran in and why (delta silently falls back to full when there is no baseline or the "
+            "source query changed), the resolved tag scope and time window it read, how many facts "
+            "retrieval returned versus how many the reflect agent actually used, the delta operations "
+            "it emitted, and a unified diff from the stored content to the content it would write.\n\n"
+            "Because nothing is persisted, a delta dry run reads exactly the window the next real "
+            "refresh would, and repeating it reads that same window again.\n\n"
+            "Every setting the refresh depends on is overridable in the body to A/B a candidate "
+            "configuration against the model's stored one. This runs the real pipeline, so it costs the "
+            "same LLM tokens as a refresh and is validated the same way."
+        ),
+        operation_id="dry_run_refresh_mental_model",
+        tags=["Mental Models"],
+    )
+    @audited("dry_run_refresh_mental_model", request_param=None)
+    async def api_dry_run_refresh_mental_model(
+        bank_id: str,
+        mental_model_id: str,
+        # Defaulted rather than optional so the body schema stays a plain $ref:
+        # an `anyOf[Overrides, null]` hides the override fields from the
+        # generated clients and from the CLI coverage check.
+        body: MentalModelRefreshOverrides = Body(default_factory=MentalModelRefreshOverrides),
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
+    ):
+        """Preview a mental model refresh without persisting anything."""
+        try:
+            result = await app.state.memory.dry_run_refresh_mental_model(
+                bank_id,
+                mental_model_id,
+                overrides=body,
+                request_context=request_context,
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Mental model {mental_model_id} not found")
+            return result
+        except LLMNotAvailableError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/"
+                f"dry-run-refresh: {error_detail}"
             )
             raise HTTPException(status_code=500, detail=str(e))
 

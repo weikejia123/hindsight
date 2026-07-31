@@ -906,6 +906,22 @@ impl ApiClient {
         })
     }
 
+    pub fn dry_run_refresh_mental_model(
+        &self,
+        bank_id: &str,
+        mental_model_id: &str,
+        overrides: &types::MentalModelRefreshOverrides,
+        _verbose: bool,
+    ) -> Result<types::MentalModelDryRunRefreshResult> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .dry_run_refresh_mental_model(bank_id, mental_model_id, None, overrides)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     pub fn get_mental_model_history(
         &self,
         bank_id: &str,

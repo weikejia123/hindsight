@@ -22,7 +22,9 @@ from typing_extensions import Annotated
 from hindsight_client_api.models.async_operation_submit_response import AsyncOperationSubmitResponse
 from hindsight_client_api.models.create_mental_model_request import CreateMentalModelRequest
 from hindsight_client_api.models.create_mental_model_response import CreateMentalModelResponse
+from hindsight_client_api.models.mental_model_dry_run_refresh_result import MentalModelDryRunRefreshResult
 from hindsight_client_api.models.mental_model_list_response import MentalModelListResponse
+from hindsight_client_api.models.mental_model_refresh_overrides import MentalModelRefreshOverrides
 from hindsight_client_api.models.mental_model_response import MentalModelResponse
 from hindsight_client_api.models.update_mental_model_request import UpdateMentalModelRequest
 
@@ -921,6 +923,327 @@ class MentalModelsApi:
         return self.api_client.param_serialize(
             method='DELETE',
             resource_path='/v1/default/banks/{bank_id}/mental-models/{mental_model_id}',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
+
+
+    @validate_call
+    async def dry_run_refresh_mental_model(
+        self,
+        bank_id: StrictStr,
+        mental_model_id: StrictStr,
+        authorization: Optional[StrictStr] = None,
+        mental_model_refresh_overrides: Optional[MentalModelRefreshOverrides] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> MentalModelDryRunRefreshResult:
+        """Dry-run mental model refresh (preview, no persistence)
+
+        Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.  Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.  Every setting the refresh depends on is overridable in the body to A/B a candidate configuration against the model's stored one. This runs the real pipeline, so it costs the same LLM tokens as a refresh and is validated the same way.
+
+        :param bank_id: (required)
+        :type bank_id: str
+        :param mental_model_id: (required)
+        :type mental_model_id: str
+        :param authorization:
+        :type authorization: str
+        :param mental_model_refresh_overrides:
+        :type mental_model_refresh_overrides: MentalModelRefreshOverrides
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._dry_run_refresh_mental_model_serialize(
+            bank_id=bank_id,
+            mental_model_id=mental_model_id,
+            authorization=authorization,
+            mental_model_refresh_overrides=mental_model_refresh_overrides,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "MentalModelDryRunRefreshResult",
+            '422': "HTTPValidationError",
+        }
+        response_data = await self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        await response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call
+    async def dry_run_refresh_mental_model_with_http_info(
+        self,
+        bank_id: StrictStr,
+        mental_model_id: StrictStr,
+        authorization: Optional[StrictStr] = None,
+        mental_model_refresh_overrides: Optional[MentalModelRefreshOverrides] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[MentalModelDryRunRefreshResult]:
+        """Dry-run mental model refresh (preview, no persistence)
+
+        Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.  Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.  Every setting the refresh depends on is overridable in the body to A/B a candidate configuration against the model's stored one. This runs the real pipeline, so it costs the same LLM tokens as a refresh and is validated the same way.
+
+        :param bank_id: (required)
+        :type bank_id: str
+        :param mental_model_id: (required)
+        :type mental_model_id: str
+        :param authorization:
+        :type authorization: str
+        :param mental_model_refresh_overrides:
+        :type mental_model_refresh_overrides: MentalModelRefreshOverrides
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._dry_run_refresh_mental_model_serialize(
+            bank_id=bank_id,
+            mental_model_id=mental_model_id,
+            authorization=authorization,
+            mental_model_refresh_overrides=mental_model_refresh_overrides,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "MentalModelDryRunRefreshResult",
+            '422': "HTTPValidationError",
+        }
+        response_data = await self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        await response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call
+    async def dry_run_refresh_mental_model_without_preload_content(
+        self,
+        bank_id: StrictStr,
+        mental_model_id: StrictStr,
+        authorization: Optional[StrictStr] = None,
+        mental_model_refresh_overrides: Optional[MentalModelRefreshOverrides] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """Dry-run mental model refresh (preview, no persistence)
+
+        Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.  Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.  Every setting the refresh depends on is overridable in the body to A/B a candidate configuration against the model's stored one. This runs the real pipeline, so it costs the same LLM tokens as a refresh and is validated the same way.
+
+        :param bank_id: (required)
+        :type bank_id: str
+        :param mental_model_id: (required)
+        :type mental_model_id: str
+        :param authorization:
+        :type authorization: str
+        :param mental_model_refresh_overrides:
+        :type mental_model_refresh_overrides: MentalModelRefreshOverrides
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._dry_run_refresh_mental_model_serialize(
+            bank_id=bank_id,
+            mental_model_id=mental_model_id,
+            authorization=authorization,
+            mental_model_refresh_overrides=mental_model_refresh_overrides,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "MentalModelDryRunRefreshResult",
+            '422': "HTTPValidationError",
+        }
+        response_data = await self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _dry_run_refresh_mental_model_serialize(
+        self,
+        bank_id,
+        mental_model_id,
+        authorization,
+        mental_model_refresh_overrides,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        if bank_id is not None:
+            _path_params['bank_id'] = bank_id
+        if mental_model_id is not None:
+            _path_params['mental_model_id'] = mental_model_id
+        # process the query parameters
+        # process the header parameters
+        if authorization is not None:
+            _header_params['authorization'] = authorization
+        # process the form parameters
+        # process the body parameter
+        if mental_model_refresh_overrides is not None:
+            _body_params = mental_model_refresh_overrides
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json'
+                ]
+            )
+
+        # set the HTTP header `Content-Type`
+        if _content_type:
+            _header_params['Content-Type'] = _content_type
+        else:
+            _default_content_type = (
+                self.api_client.select_header_content_type(
+                    [
+                        'application/json'
+                    ]
+                )
+            )
+            if _default_content_type is not None:
+                _header_params['Content-Type'] = _default_content_type
+
+        # authentication setting
+        _auth_settings: List[str] = [
+        ]
+
+        return self.api_client.param_serialize(
+            method='POST',
+            resource_path='/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

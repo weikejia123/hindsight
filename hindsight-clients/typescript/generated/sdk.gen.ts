@@ -71,6 +71,9 @@ import type {
   DryRunExtractMemoriesData,
   DryRunExtractMemoriesErrors,
   DryRunExtractMemoriesResponses,
+  DryRunRefreshMentalModelData,
+  DryRunRefreshMentalModelErrors,
+  DryRunRefreshMentalModelResponses,
   ExportBankTemplateData,
   ExportBankTemplateErrors,
   ExportBankTemplateResponses,
@@ -667,6 +670,31 @@ export const refreshMentalModel = <ThrowOnError extends boolean = false>(
     RefreshMentalModelErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh", ...options });
+
+/**
+ * Dry-run mental model refresh (preview, no persistence)
+ *
+ * Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.
+ *
+ * Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.
+ *
+ * Every setting the refresh depends on is overridable in the body to A/B a candidate configuration against the model's stored one. This runs the real pipeline, so it costs the same LLM tokens as a refresh and is validated the same way.
+ */
+export const dryRunRefreshMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<DryRunRefreshMentalModelData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    DryRunRefreshMentalModelResponses,
+    DryRunRefreshMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
 
 /**
  * Clear mental model content

@@ -711,6 +711,7 @@ function CreateMentalModelDialog({
     includeChunks: "" as "" | "true" | "false",
     recallMaxTokens: "",
     recallChunksMaxTokens: "",
+    keepTrace: false,
   });
 
   const handleCreate = async () => {
@@ -769,6 +770,7 @@ function CreateMentalModelDialog({
           include_chunks: includeChunks,
           recall_max_tokens: recallMaxTokens,
           recall_chunks_max_tokens: recallChunksMaxTokens,
+          keep_trace: form.keepTrace,
         },
       });
 
@@ -1121,6 +1123,26 @@ function CreateMentalModelDialog({
                   </p>
                 </div>
               </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTroubleshooting")}
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="create-keep-trace"
+                    checked={form.keepTrace}
+                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
+                  />
+                  <label
+                    htmlFor="create-keep-trace"
+                    className="text-sm font-medium text-foreground cursor-pointer"
+                  >
+                    {t("optionsKeepTraceLabel")}
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
+              </section>
             </TabsContent>
           </div>
         </Tabs>
@@ -1197,6 +1219,7 @@ function UpdateMentalModelDialog({
       mentalModel.trigger?.recall_chunks_max_tokens != null
         ? String(mentalModel.trigger.recall_chunks_max_tokens)
         : "",
+    keepTrace: mentalModel.trigger?.keep_trace || false,
   });
   const [form, setForm] = useState(buildFormState);
 
@@ -1261,6 +1284,7 @@ function UpdateMentalModelDialog({
           include_chunks: includeChunks,
           recall_max_tokens: recallMaxTokens,
           recall_chunks_max_tokens: recallChunksMaxTokens,
+          keep_trace: form.keepTrace,
         },
       });
 
@@ -1566,6 +1590,26 @@ function UpdateMentalModelDialog({
                     {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTroubleshooting")}
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-keep-trace"
+                    checked={form.keepTrace}
+                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
+                  />
+                  <label
+                    htmlFor="edit-keep-trace"
+                    className="text-sm font-medium text-foreground cursor-pointer"
+                  >
+                    {t("optionsKeepTraceLabel")}
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
               </section>
             </TabsContent>
           </div>
