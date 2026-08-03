@@ -740,16 +740,94 @@ sequenceDiagram
     A-->>C: 200 {mental model 详情}
 ```
 
-### 8.10 字段流转要点小结
+### 8.10 字段流转要点小结（中文说明 + 场景流程）
 
-| API | 请求关键字段 | 落表（写） | 读表 |
-|-----|------------|-----------|------|
-| Retain | content / tags / entities / document_id | documents、chunks、memory_units、entities、unit_entities、memory_links | — |
-| Recall | query / types / budget / tags | — | memory_units（4 路）、entities、memory_links |
-| Reflect | query / fact_types / response_schema | — | memory_units、mental_models、directives |
-| Consolidate | — | memory_units（observation） | memory_units（候选事实） |
-| Create Bank | mission / retain_mission / enable_observations | banks | — |
-| Curate | text / fact_type / state / reason | memory_units 或 invalidated_memory_units | memory_units |
-| Delete Doc | — | 级联删 documents/chunks/memory_units | memory_units |
-| Create Directive | name / content / priority | directives | — |
-| Refresh MM | — | mental_models、mental_model_history | mental_models |
+#### 1. Retain — 存记忆（写入核心）
+
+**中文说明**：把一段对话、文档或文本内容存入记忆库。系统用 LLM 自动提取结构化事实（区分世界知识/个人经历）、解析实体、计算向量，写入核心表并建立关联。
+
+**场景流程**：Agent 会话结束/文档入库时调用。典型流程：调用方提交内容 → 系统分块 → 原文存档（documents/chunks）→ LLM 提取事实 → 事实向量化 → 写入 memory_units → 实体/关联落库。`async=true` 时后台异步处理，返回 operation_id 可轮询进度。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| content / tags / entities / document_id | documents、chunks、memory_units、entities、unit_entities、memory_links | — |
+
+#### 2. Recall — 查记忆（检索）
+
+**中文说明**：根据查询词检索相关记忆。4 路并行召回（语义向量/全文/图谱/时间）后融合重排，返回最相关的事实列表——"把相关记忆摆到面前"。
+
+**场景流程**：每次任务开始前注入上下文时调用。典型流程：提交 query → 查询向量化 → 4 路并行检索 → RRF 融合 → 重排 → 返回按相关度排序的结果。可用 types 限定事实类型、tags 限定标签范围。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| query / types / budget / tags | — | memory_units（4 路）、entities、memory_links |
+
+#### 3. Reflect — 推理合成（读后思考）
+
+**中文说明**：基于记忆库中的相关事实、观测和心智模型，让 LLM 综合推理后给出有依据的回答——"读完记忆后替你得出结论"，不是简单检索。
+
+**场景流程**：需要跨多段记忆综合判断时调用。典型流程：提交 query → 检索相关记忆 + 读取 mental_models/directives → 组装 prompt（含 mission/disposition）→ LLM 合成 → 返回 text + based_on（引用了哪些记忆）。支持 response_schema 结构化输出。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| query / fact_types / response_schema | — | memory_units、mental_models、directives |
+
+#### 4. Consolidate — 触发归纳（升华）
+
+**中文说明**：手动触发后台归纳任务：扫描重复/相似事实，用 LLM 折叠成 observation（带证据引文和溯源），实现"从记录到认知"的升华。日常由系统自动调度，此端点用于手动干预。
+
+**场景流程**：批量导入大量事实后想立即归纳时调用。典型流程：提交空请求 → 扫描候选事实 → LLM 归纳相似项 → 写 observation（同表 fact_type 区分）→ 双向溯源（source_memory_ids）。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| — | memory_units（observation） | memory_units（候选事实） |
+
+#### 5. Create Bank — 建库（隔离空间）
+
+**中文说明**：创建/更新一个记忆库（大脑）。每个 bank 独立隔离，可配置身份使命（mission）、归纳开关、分块大小等 per-bank 参数。
+
+**场景流程**：新 agent 或新项目接入时调用。典型流程：提交 bank_id + 配置 → 写入 banks 表 → 返回 bank 详情。后续该 bank 的所有记忆操作都独立于其他 bank。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| mission / retain_mission / enable_observations | banks | — |
+
+#### 6. Curate — 编辑/作废记忆（修正）
+
+**中文说明**：修正错误记忆：可编辑事实内容（重算向量、重标实体）或软作废（移入 invalidated_memory_units，可恢复）——"新事实优先于旧事实"的落点。
+
+**场景流程**：发现记忆错误或过时时调用。典型流程：提交 memory_id + 更新字段 → 若 state=invalidated 则移入作废表并记录原因；否则更新文本/类型/实体并重算向量。编辑历史写入 observation_history。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| text / fact_type / state / reason | memory_units 或 invalidated_memory_units | memory_units |
+
+#### 7. Delete Document — 删除文档（级联清理）
+
+**中文说明**：删除一份原始文档及其派生的全部数据（分块、提取的记忆、作废副本）——整条溯源链清理。
+
+**场景流程**：文档失效/误导入时调用。典型流程：提交 document_id → 查出关联记忆 → 逐层删除（memory_units → invalidated → chunks → documents）→ 返回删除数量。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| — | 级联删 documents/chunks/memory_units | memory_units |
+
+#### 8. Create Directive — 建硬规则（约束）
+
+**中文说明**：创建一条硬规则：不参与检索归纳、不被自动修改，只在 reflect/推理时作为约束注入——唯一保留独立表的记忆类型。
+
+**场景流程**：定义项目/agent 的强制规则时调用。典型流程：提交 name + content + priority → 写入 directives 表 → 后续 reflect 自动携带该规则。is_active=false 可停用。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| name / content / priority | directives | — |
+
+#### 9. Refresh MM — 刷新推理产物（重跑 reflect）
+
+**中文说明**：按 mental model 记录的 source_query 重新执行一次 reflect，更新推理产物并留历史——让"认知"跟上"记忆"的最新变化。
+
+**场景流程**：记忆库大量更新后想刷新既有结论时调用。典型流程：提交 mental_model_id → 读取其 source_query → 重新 reflect → 写 history → 更新 content/last_refreshed_at。
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| — | mental_models、mental_model_history | mental_models |
