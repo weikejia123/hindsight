@@ -29,11 +29,18 @@ Hindsight 是一个**带学习能力的 Agent 长期记忆系统**：它不只�
 
 ---
 
-## 三、Hindsight 的层次能力全景（重点）
+## 三、Hindsight 能力全景（源码验证版：双维度，无分层）
 
-从用户视角，Hindsight 的记忆管理能力分 **4 个维度、7 个层次**。每层先说是什么，再说怎么用。
+> ⚠️ **源码验证结论（2026-08-03）**：Hindsight 系统**没有 L1/L2/L3 分层**。全仓搜索无 layer/level 概念；`memory_units` 单表平级，无分层字段；历史分层（learnings/mental_models 独立表）已被新知识架构迁移（2026-01）主动删除，合并为单表。系统真实的维度只有两个：
+>
+> ```
+> 维度 1：bank       —— 隔离空间（唯一分隔维度，所有表挂 bank_id）
+> 维度 2：fact_type  —— 记忆类型（world / experience / observation，同表字段区分）
+> ```
+>
+> 下文"维度 A-D"是从用户视角组织能力的**理解框架**，不是系统分层。
 
-### 维度 A：数据分层 — 记忆内容的 3 种类型
+### 维度 A：记忆类型（fact_type）— 3 种类型，同一张表区分
 
 | 类型 | 代码值 | 含义 | 典型例子 | 谁产生 |
 |------|--------|------|----------|--------|
@@ -46,36 +53,37 @@ Hindsight 是一个**带学习能力的 Agent 长期记忆系统**：它不只�
 - observation 不用你管——后台 consolidation 自动从事实中凝练，检索时优先命中（它代表"认知"而非"记录"）。
 - 查询时可按 fact_type 过滤（API 支持 `fact_types` 参数），例如只要世界知识不要个人经历。
 
-### 维度 B：存储分层 — 数据从原始到精炼的 5 级管线
+### 维度 B：数据组织 — bank 内的对象关系（平级，非分层）
 
 ```
-Bank（大脑/隔离空间）
- └─ Document（原始输入：对话、文档、git 历史）
-     └─ Memory Unit（提取的事实：world/experience）
-         ├─ Entity + Entity Link（实体知识图谱：谁/什么/关联谁）
-         └─ Observation（归纳的观测，带 evidence 引文 + 时间趋势）
+Bank（隔离空间，唯一分隔维度）
+ ├─ Document（原始输入：对话、文档、git 历史）
+ ├─ Memory Unit（提取的事实，fact_type 区分类型）
+ ├─ Entity + Entity Link（实体知识图谱）
+ ├─ Observation（归纳的观测，同表 fact_type='observation'）
+ └─ Directive（硬规则，独立表）
 ```
 
-| 层 | 是什么 | 怎么用（用户视角） |
+| 对象 | 是什么 | 怎么用（用户视角） |
 |----|--------|-------------------|
 | **Bank** | 完全隔离的记忆库，每个 bank 一个"大脑"，可设 mission（身份使命）和 disposition（怀疑/字面/共情 3 项 1-5 分性格） | 一个 agent 一个 bank，或一个项目一个 bank。bank 之间严格隔离，不互相泄漏。disposition 只影响 reflect 推理风格，不影响 recall |
 | **Document** | retain 的原始输入，保留全文 | 不需要管理，自动存。可查（documents 列表），是事实的溯源依据 |
-| **Memory Unit** | LLM 从 document 提取的原子事实（world/experience），含时间、实体、归属 | 核心查询对象。recall/reflect 都作用于它 |
+| **Memory Unit** | LLM 从 document 提取的原子事实（world/experience/observation），含时间、实体、归属 | 核心查询对象。recall/reflect 都作用于它 |
 | **Entity/Link** | 实体（人/项目/工具）及其关系边，形成知识图谱 | 图谱检索策略（graph）用：问"和 X 相关的事"时，从 X 出发沿关系扩散 |
-| **Observation** | consolidation 把多条事实折叠成的结论，每条带证据引文（exact quote）+ 时间趋势（递增/稳定/新近） | 自动产生，检索时权重高。反映系统"学到了什么" |
+| **Directive** | 硬规则（独立表，区别于可被检索的事实） | 规则类知识，检索/推理时作为约束 |
 
-### 维度 C：操作分层 — 4 个核心动词
+### 维度 C：处理阶段 — retain / consolidation / recall（流程抽象，非存储层）
 
-| 操作 | 方向 | 做什么 | 什么时候用 | 本地现状 |
-|------|------|--------|-----------|---------|
-| **retain** | 存 | LLM 从输入提取事实+实体+关系写入 | 对话结束、文档入库、git 提交 | Hermes 每轮对话自动 retain |
-| **recall** | 查 | 4 策略并行召回（语义向量 / BM25 全文 / 图谱扩散 / 时间线）+ 交叉编码器重排，返回最相关事实 | 每个任务开始时注入相关记忆 | Hermes 每轮自动 recall（budget=mid） |
-| **reflect** | 推理 | 把查询 + 相关记忆 + 心智模型交给 LLM，生成有依据的合成回答（不是搜出来，是"想出来"） | 需要跨多段记忆综合判断时 | Hermes 的 `hindsight_reflect` 工具 |
-| **consolidate** | 升华 | 后台扫描重复事实 → 折叠成 observation 心智模型 | 完全自动，无需干预 | 运行中 |
+| 操作 | 方向 | 做什么 | 写入/读取位置 | 本地现状 |
+|------|------|--------|--------------|---------|
+| **retain** | 存 | LLM 从输入提取事实+实体+关系写入 | 写 memory_units | Hermes 每轮对话自动 retain |
+| **consolidation** | 升华 | 后台扫描重复事实 → 折叠成 observation | 写 memory_units（同表） | 运行中，全自动 |
+| **recall** | 查 | 4 策略并行召回（语义向量 / BM25 全文 / 图谱扩散 / 时间线）+ 交叉编码器重排 | 读 memory_units | Hermes 每轮自动 recall（budget=mid） |
+| **reflect** | 推理 | 把查询 + 相关记忆交给 LLM，生成有依据的合成回答 | 读 memory_units + LLM 综合 | Hermes 的 `hindsight_reflect` 工具 |
 
-**关键区别**：recall 是"把相关记忆摆到你面前"，reflect 是"读完记忆后替你得出结论"。日常上下文注入用 recall（快、省 token），做深度判断用 reflect（慢、需要 LLM）。
+**关键区别**：recall 是"把相关记忆摆到你面前"，reflect 是"读完记忆后替你得出结论"。日常上下文注入用 recall（快、省 token），做深度判断用 reflect（慢、需要 LLM）。三阶段作用于**同一个存储**（memory_units 表），是流程先后关系，不是存储分层。
 
-### 维度 D：接入分层 — 6 种访问方式
+### 维度 D：接入方式 — 6 种访问通道
 
 | 接入方式 | 覆盖对象 | 一句话说明 |
 |----------|---------|-----------|
@@ -84,7 +92,7 @@ Bank（大脑/隔离空间）
 | **MCP server** | 任何支持 MCP client 的 agent/IDE | 以标准 MCP 暴露 retain/recall/reflect |
 | **REST API + SDK** | 完全自定义接入 | Python/TypeScript/Rust 三语 SDK；任意脚本/agent 可调 |
 | **hindsight-cli**（Rust） | 命令行 | 手动 retain/recall/reflect，脚本友好 |
-| **Control Plane UI** | 人类 | localhost:9999 面板：看所有 bank、文档、事实、心智模型，可视化管理 |
+| **Control Plane UI** | 人类 | localhost:9999 面板：看所有 bank、文档、事实、观测，可视化管理 |
 
 ---
 

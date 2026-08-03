@@ -21,6 +21,18 @@
 
 ---
 
+## 一.5 源码验证：系统无分层，L1/L2/L3 只是本文档的逻辑分组
+
+> ⚠️ **重要澄清（2026-08-03 源码验证）**：Hindsight 系统**不存在 L1/L2/L3 分层机制**。
+> - 全仓搜索无 `layer`/`level`/`L1`/`L2`/`L3` 概念（仅 HTTP layer、log_level、GPU layers 等无关匹配）
+> - `memory_units` 单表平级，无 level/layer 字段；记忆类型由 `fact_type` 字段区分（`world` / `experience` / `observation`，见 `response_models.py:13`）
+> - 历史分层（learnings / mental_models 独立表）已被新知识架构迁移 `p1k2l3m4n5o6`（2026-01）**主动删除**，心智模型并入 memory_units 单表
+> - 系统真实维度只有两个：**bank（隔离空间）+ fact_type（记忆类型）**
+>
+> 本文档的 L1/L2/L3 是**规划用的逻辑分组**（把将来的 bank 按职责分类：通用域/开发域/特殊域），**不是 Hindsight 的系统机制**。落地时，每个成员（ops、research、coding-agent::yszx、pi...）都是平级的真实 bank，系统不区分它们的"层"。
+
+---
+
 ## 二、设计原则（V2 修订）
 
 | # | 原则 | 说明 |
