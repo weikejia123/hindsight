@@ -527,3 +527,229 @@ flowchart LR
 ```
 
 > 图例：`-->` = 真实外键；`-.->` = 逻辑关联（无 FK 约束）
+
+---
+
+## 八、对外 API 数据流转时序图（一个 API 一张图）
+
+> 依据：运行中 API 的 OpenAPI schema（localhost:8888/openapi.json，v0.8.4，56 端点）+ 源码调用链。
+> 参与者：`Client` 调用方 → `API` FastAPI 路由 → `Engine` MemoryEngine → `LLM` 事实提取/合成 → `Embedder` 向量嵌入（本地 bge-m3）→ `PG` PostgreSQL 实体表。
+> 图中消息标注**字段级流转**：请求体字段 → 引擎处理 → 落表字段。
+
+### 8.0 API 总览（56 端点分类）
+
+| 分类 | 端点 | 数量 |
+|------|------|------|
+| 核心记忆操作 | memories（retain/recall）、reflect、consolidate | 4 |
+| bank 管理 | banks CRUD、profile、config、background、stats | 10 |
+| 文档管理 | documents CRUD、chunks、reprocess、transfer、files/retain | 10 |
+| 记忆管理 | memories/list、curate、history、dry-run、observations | 8 |
+| 知识图谱 | entities、entities/graph、graph | 3 |
+| 规则与推理 | directives CRUD、mental-models CRUD+refresh | 11 |
+| 运维 | operations、llm-requests、audit-logs、webhooks、health、metrics、version | 10 |
+
+### 8.1 Retain — POST /v1/default/banks/{bank_id}/memories（存记忆，走 LLM）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant L as LLM
+    participant EMB as Embedder
+    participant P as PG
+    C->>A: POST /v1/default/banks/{bank_id}/memories
+    Note over C,A: "items: [{content, timestamp, context, metadata, document_id, entities, tags}], async"
+    A->>E: MemoryEngine.retain(bank_id, items)
+    E->>E: 按 retain_chunk_size 分块
+    E->>P: INSERT documents {id, bank_id, original_text, content_hash, tags}
+    E->>P: INSERT chunks {chunk_id, document_id, bank_id, chunk_index, chunk_text}
+    E->>L: 事实提取 content + retain_mission
+    L-->>E: "facts: [{fact_type, fact, entities, occurred_start}]"
+    E->>EMB: 计算事实 embedding
+    EMB-->>E: vector
+    E->>P: INSERT memory_units {bank_id, fact_type, text, embedding, document_id, chunk_id, tags, occurred_start}
+    E->>P: INSERT entities {canonical_name, bank_id} + unit_entities {unit_id, entity_id}
+    E->>P: INSERT memory_links {from_unit_id, to_unit_id, link_type: caused_by}
+    E-->>A: "{status, memory_units: [ids], operation_id}"
+    A-->>C: 201 {status, memory_units}
+```
+
+### 8.2 Recall — POST /v1/default/banks/{bank_id}/memories/recall（查记忆，4 路检索）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant EMB as Embedder
+    participant P as PG
+    C->>A: POST /v1/default/banks/{bank_id}/memories/recall
+    Note over C,A: "query, types[world/experience/observation], prefer_observations, budget, max_tokens, tags"
+    A->>E: MemoryEngine.recall(bank_id, query, types, budget)
+    E->>EMB: 查询向量化
+    EMB-->>E: query_embedding
+    par 4 路并行检索
+        E->>P: semantic 向量检索 idx_mu_emb_*
+        E->>P: bm25 全文检索 search_vector
+        E->>P: graph 图谱扩散 entities/memory_links
+        E->>P: temporal 时间过滤 occurred_start
+    end
+    E->>E: RRF 融合 + reranker 重排
+    E-->>A: "results: [{memory_id, text, fact_type, score, source}]"
+    A-->>C: 200 {results, trace}
+```
+
+### 8.3 Reflect — POST /v1/default/banks/{bank_id}/reflect（推理合成，走 LLM）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant L as LLM
+    participant P as PG
+    C->>A: POST /v1/default/banks/{bank_id}/reflect
+    Note over C,A: "query, budget, fact_types, exclude_mental_models, response_schema, tags"
+    A->>E: MemoryEngine.reflect(bank_id, query)
+    E->>P: 检索 memory_units（facts + observations）
+    P-->>E: relevant memories
+    E->>P: 读取 mental_models（reflect 产物）+ directives（硬规则）
+    P-->>E: 上下文素材
+    E->>L: 组装 prompt（query + memories + mission + disposition）
+    L-->>E: "text, based_on: [memory_ids]"
+    E-->>A: "{text, based_on, structured_output, usage}"
+    A-->>C: 200 {text, based_on}
+```
+
+### 8.4 Consolidate — POST /v1/default/banks/{bank_id}/consolidate（后台归纳，写 observation）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant L as LLM
+    participant P as PG
+    C->>A: POST /v1/default/banks/{bank_id}/consolidate
+    A->>E: MemoryEngine.consolidate(bank_id)
+    E->>P: 扫描候选事实 memory_units WHERE fact_type IN (world, experience)
+    P-->>E: 候选事实（含 entities）
+    E->>L: 归纳相似事实
+    L-->>E: "observation: [{text, evidence_quotes}]"
+    E->>P: INSERT memory_units {fact_type: observation, text, proof_count, source_memory_ids, observation_scopes}
+    E->>P: UPDATE 原事实 source_memory_ids（双向溯源）
+    E-->>A: "{status: ok, observations_created}"
+    A-->>C: 200 {status}
+```
+
+### 8.5 Create Bank — PUT /v1/default/banks/{bank_id}（建库）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant P as PG
+    C->>A: PUT /v1/default/banks/{bank_id}
+    Note over C,A: "mission, reflect_mission, retain_mission, retain_chunk_size, enable_observations, observations_mission"
+    A->>E: MemoryEngine.create_or_update_bank(bank_id, config)
+    E->>P: INSERT banks {bank_id, mission, disposition, config jsonb}
+    P-->>E: bank 记录
+    E-->>A: "{bank_id, mission, disposition, config}"
+    A-->>C: 200 {bank 详情}
+```
+
+### 8.6 Curate Memory — PATCH /v1/default/banks/{bank_id}/memories/{memory_id}（编辑/作废）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant EMB as Embedder
+    participant P as PG
+    C->>A: PATCH /v1/default/banks/{bank_id}/memories/{memory_id}
+    Note over C,A: "text, fact_type, entities, context, occurred_start, state[invalidated], reason"
+    A->>E: MemoryEngine.curate(bank_id, memory_id, updates)
+    alt state = invalidated
+        E->>P: INSERT invalidated_memory_units（保留原文 + invalidation_reason）
+        E->>P: DELETE memory_units（软删，可恢复）
+    else 编辑字段
+        E->>EMB: 重新计算 embedding
+        EMB-->>E: new_vector
+        E->>P: UPDATE memory_units {text, fact_type, embedding, edited_at}
+        E->>P: UPDATE unit_entities（实体重标注）
+    end
+    E-->>A: "{id, state, edited_at}"
+    A-->>C: 200 {memory 详情}
+```
+
+### 8.7 Delete Document — DELETE /v1/default/banks/{bank_id}/documents/{document_id}（级联删）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant P as PG
+    C->>A: DELETE /v1/default/banks/{bank_id}/documents/{document_id}
+    A->>E: MemoryEngine.delete_document(bank_id, document_id)
+    E->>P: SELECT memory_units WHERE document_id
+    E->>P: DELETE memory_units（级联）
+    E->>P: DELETE invalidated_memory_units
+    E->>P: DELETE chunks
+    E->>P: DELETE documents
+    E-->>A: "{message, memory_units_deleted}"
+    A-->>C: 200 {message, memory_units_deleted}
+```
+
+### 8.8 Create Directive — POST /v1/default/banks/{bank_id}/directives（硬规则）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant P as PG
+    C->>A: POST /v1/default/banks/{bank_id}/directives
+    Note over C,A: "name, content, priority, is_active, tags"
+    A->>E: MemoryEngine.create_directive(bank_id, directive)
+    E->>P: INSERT directives {id, bank_id, name, content, priority, is_active, tags}
+    E-->>A: "{id, name, content, priority}"
+    A-->>C: 201 {directive 详情}
+```
+
+### 8.9 Refresh Mental Model — POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh（重跑 reflect 产物）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    participant E as MemoryEngine
+    participant L as LLM
+    participant P as PG
+    C->>A: POST /v1/default/banks/{bank_id}/mental-models/{id}/refresh
+    A->>E: MemoryEngine.refresh_mental_model(bank_id, id)
+    E->>P: SELECT mental_models {source_query, trigger, max_tokens}
+    E->>L: 用 source_query 重新 reflect
+    L-->>E: 新推理产物
+    E->>P: INSERT mental_model_history {mental_model_id, bank_id, content, changed_at}
+    E->>P: UPDATE mental_models {content, reflect_response, last_refreshed_at}
+    E-->>A: "{id, last_refreshed_at}"
+    A-->>C: 200 {mental model 详情}
+```
+
+### 8.10 字段流转要点小结
+
+| API | 请求关键字段 | 落表（写） | 读表 |
+|-----|------------|-----------|------|
+| Retain | content / tags / entities / document_id | documents、chunks、memory_units、entities、unit_entities、memory_links | — |
+| Recall | query / types / budget / tags | — | memory_units（4 路）、entities、memory_links |
+| Reflect | query / fact_types / response_schema | — | memory_units、mental_models、directives |
+| Consolidate | — | memory_units（observation） | memory_units（候选事实） |
+| Create Bank | mission / retain_mission / enable_observations | banks | — |
+| Curate | text / fact_type / state / reason | memory_units 或 invalidated_memory_units | memory_units |
+| Delete Doc | — | 级联删 documents/chunks/memory_units | memory_units |
+| Create Directive | name / content / priority | directives | — |
+| Refresh MM | — | mental_models、mental_model_history | mental_models |
