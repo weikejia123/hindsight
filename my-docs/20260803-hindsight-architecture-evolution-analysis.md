@@ -440,3 +440,90 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 3. **directives 是唯一例外**：硬规则不参与"检索-归纳-遗忘"生命周期，保留独立表（印证第四节判据）。
 4. **mental_models 表名易误导**：它是 reflect 响应（推理产物，用户可刷新），不是旧分层架构的 mental_models 表——旧表已 DROP，此表由 reflections 改名而来。
 5. **observation_sources 表不存在**：迁移链中曾创建（k6l7m8n9o0p1），最终架构未保留——observation 来源改由 memory_units 列承载，再次印证"能内嵌就不建表"的收敛原则。
+
+---
+
+## 七、实体关系（mermaid ER 图）
+
+> 依据：数据库 `pg_constraint` 实查外键约束（2026-08-03）。复合外键（如 documents 的 bank_id+document_id）在逻辑图中简化为单边关系。
+
+### 7.1 记忆核心 ER（10 张表，全部真实外键）
+
+```mermaid
+erDiagram
+    BANKS ||--o{ DOCUMENTS : "拥有"
+    BANKS ||--o{ MEMORY_UNITS : "隔离"
+    DOCUMENTS ||--o{ CHUNKS : "分块"
+    DOCUMENTS ||--o{ MEMORY_UNITS : "提取事实"
+    DOCUMENTS ||--o{ INVALIDATED_MEMORY_UNITS : "作废溯源"
+    CHUNKS ||--o{ MEMORY_UNITS : "引用分块"
+    MEMORY_UNITS ||--o{ MEMORY_LINKS : "来源单元"
+    MEMORY_UNITS ||--o{ MEMORY_LINKS : "目标单元"
+    MEMORY_UNITS ||--o{ UNIT_ENTITIES : "标注实体"
+    MEMORY_UNITS ||--o{ OBSERVATION_HISTORY : "变更历史"
+    ENTITIES ||--o{ UNIT_ENTITIES : "被标注"
+    ENTITIES ||--o{ ENTITY_COOCCURRENCES : "共现"
+    ENTITIES ||--o{ MEMORY_LINKS : "经实体连接"
+```
+
+### 7.2 规则 / 推理 / 运维 ER（5 张表，真实外键）
+
+```mermaid
+erDiagram
+    BANKS ||--o{ DIRECTIVES : "硬规则"
+    BANKS ||--o{ MENTAL_MODELS : "推理产物"
+    BANKS ||--o{ WEBHOOKS : "通知配置"
+    BANKS ||--o{ ASYNC_OPERATIONS : "异步任务"
+    MENTAL_MODELS ||--o{ MENTAL_MODEL_HISTORY : "变更历史"
+```
+
+### 7.3 无外键约束的表（逻辑关联）
+
+以下 5 张表在数据库中**无 FK 约束**，仅通过业务字段逻辑关联：
+
+| 表 | 逻辑关联键 | 关联对象 |
+|----|-----------|---------|
+| `llm_requests` | bank_id | banks（LLM 调用追踪，per-bank 维度） |
+| `audit_log` | bank_id | banks（审计日志） |
+| `bank_stats_cache` | bank_id | banks（统计缓存） |
+| `graph_maintenance_queue` | bank_id | banks（图谱维护队列） |
+| `file_storage` | storage_key | documents.file_storage_key（大文件，documents 侧逻辑引用） |
+
+### 7.4 复合外键说明（psql 实查）
+
+| 表 | 复合键 | 说明 |
+|----|--------|------|
+| `chunks` | (bank_id, document_id) → documents | 分块按 bank+document 定位 |
+| `memory_units` | (bank_id, document_id) → documents | 记忆按 bank+document 溯源 |
+| `invalidated_memory_units` | (bank_id, document_id) → documents | 作废记忆溯源 |
+| `mental_model_history` | (bank_id, mental_model_id) → mental_models | 历史按 bank+mm 定位 |
+
+### 7.5 关系全景图（flowchart 视角，含逻辑关联）
+
+```mermaid
+flowchart LR
+    BANKS --> DOCUMENTS
+    BANKS --> MEMORY_UNITS
+    BANKS --> DIRECTIVES
+    BANKS --> MENTAL_MODELS
+    BANKS --> WEBHOOKS
+    BANKS --> ASYNC_OPERATIONS
+    BANKS -.-> LLM_REQUESTS
+    BANKS -.-> AUDIT_LOG
+    BANKS -.-> BANK_STATS_CACHE
+    BANKS -.-> GRAPH_MAINTENANCE_QUEUE
+    DOCUMENTS --> CHUNKS
+    DOCUMENTS --> MEMORY_UNITS
+    DOCUMENTS --> INVALIDATED_MEMORY_UNITS
+    DOCUMENTS -.-> FILE_STORAGE
+    CHUNKS --> MEMORY_UNITS
+    MEMORY_UNITS --> MEMORY_LINKS
+    MEMORY_UNITS --> UNIT_ENTITIES
+    MEMORY_UNITS --> OBSERVATION_HISTORY
+    ENTITIES --> UNIT_ENTITIES
+    ENTITIES --> ENTITY_COOCCURRENCES
+    ENTITIES --> MEMORY_LINKS
+    MENTAL_MODELS --> MENTAL_MODEL_HISTORY
+```
+
+> 图例：`-->` = 真实外键；`-.->` = 逻辑关联（无 FK 约束）
