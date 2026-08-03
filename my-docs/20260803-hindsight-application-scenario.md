@@ -154,7 +154,7 @@ stop          → 会话结束：读 transcript → retain 写回（conversation
     "/Users/weikejia/CODE/my-agent-group/projects/self/": "self-dev",
     "/Users/weikejia/CODE/my-agent-group/projects/yszx/": "coding-agent::yszx"  // 业务线聚合
   },
-  "gitIngest": "message",                    // 默认：commit message 历史，便宜
+  "gitIngest": "none",                       // 指针式决策：commit 历史在 git 里，不进记忆库
   "harnesses": {
     "grok-build": { },                       // 三种 agent 默认共享 coding-agent::<repo>
     "claude-code": { },
@@ -180,8 +180,54 @@ stop          → 会话结束：读 transcript → retain 写回（conversation
 | Hermes/开发隔离 | bank 隔离 | ✅ 架构保证 |
 | pi 接入 | MCP server / REST（无官方生命周期） | ⚠️ 需自建脚本 |
 | 项目知识沉淀 | knowledge_pages + 注入工具 | ✅ v0.8.6 新功能 |
+| 项目内容自治（指针式） | gitIngest=none + 项目 md 自治 | ✅ 用户设计决策 |
 
-**一句话**：官方集成解决的是"**同一批开发 agent 在几百个项目里自动记忆且不互相污染**"——惰性建 bank 管冷热、harness-neutral 管共享、hook 生命周期管自动存取、bank 隔离管域。你的场景里唯一需要自己动手的是 **pi 的接入**（走 MCP/REST + 自建会话注入/转录小脚本）。
+**一句话**：官方集成解决的是"**同一批开发 agent 在几百个项目里自动记忆且不互相污染**"——惰性建 bank 管冷热、harness-neutral 管共享、hook 生命周期管自动存取、bank 隔离管域。你的场景里唯一需要自己动手的是 **pi 的接入**（走 MCP/REST + 自建会话注入/转录小脚本；claude code 的 hook 实现就是现成示例）。
+
+---
+
+## 七、设计决策：指针式记忆（2026-08-03 用户确认）
+
+**用户原话**：
+> 项目内部的记忆完全可以通过项目中的会话记录和 md 文件进行管理即可，
+> 记忆系统只需要能将工作指向到项目的物理路径即可。
+
+**含义拆解**：Hindsight 在项目场景里**不存项目内容**，只存"指针"。
+
+| 内容类型 | 存放位置 | 谁管理 |
+|---------|---------|--------|
+| 项目内容知识（代码细节、架构决策、踩坑记录、会话转录） | 项目自身（my-docs/、README-WAKE.md、agent 会话记录、git 历史） | 项目自治，跟着 git 走 |
+| 项目指针（项目在哪、属哪条业务线、是开发还是参考、与哪些项目关联） | Hindsight（world 类型事实） | Hindsight + coding-agents 自动 |
+| 跨项目规律（"YSZX 系项目都用 DM8"、"这类项目常在依赖版本出问题"） | Hindsight（observation 类型，consolidation 归纳） | Hindsight 自动 |
+
+**为什么合理**（对照源码能力）：
+
+1. **成本**：几百个项目的内容全进记忆库是灾难（几千 G 的代码/文档/转录）。
+   指针式让记忆库保持轻量——一个项目只占几条 world 事实（路径+业务线+状态）。
+
+2. **一致性**：项目内容跟着项目 git 走，不会出现"记忆里的旧版本 vs 项目新文件"的漂移。
+   gitIngest 设 `none`（或 `message`），commit 历史本来就在 git 里。
+
+3. **定位精准**：记忆系统回答"**这个项目在哪、上次干到哪、和什么相关**"，
+   具体内容 agent 自己打开项目去读 md/会话记录——这正是 mapPathToBank 的职责。
+
+4. **跨项目价值保留**：observation（consolidation 归纳）依然跨项目工作——
+   这是 Hindsight 相对项目自治的增量价值：单项目内内容自治，跨项目规律归记忆系统。
+
+**对三种类型的重新定位**（更新第四节）：
+
+| 类型 | 新定位 | 说明 |
+|------|--------|------|
+| world | **项目指针 + 用户/全局知识** | 路径、业务线、状态、偏好——记忆系统的主角 |
+| experience | 大部分留在项目（转录），只记摘要级 | 会话全文在项目里；需要的话只 retain 一句"在 X 项目做了 Y" |
+| observation | 跨项目规律（保留核心价值） | consolidation 照常跑，产出跨项目洞察 |
+
+**落地含义**：
+- `gitIngest: "none"`（不需要 commit/diff 进记忆库；想要项目脉络就读项目的 git log）
+- session transcript 不必全量 retain（若 retain 只保留摘要级 experience，或交给 world 指针）
+- knowledge_pages 可选：如果项目 md 组织得好（README-WAKE + my-docs 规范），
+  知识库注入是锦上添花而非必需
+- mapPathToBank 是核心配置：它负责"工作 → 项目物理路径"的路由
 
 ---
 
