@@ -16,8 +16,16 @@
 - Fork：https://github.com/weikejia123/hindsight
 - Gitea 备份：http://localhost:3000/dzsoft/hindsight.git
 - 本地路径：`projects/memory/hindsight/`
-- 分支：`main` 跟踪上游（纯净） / `wkj-dev` 二开（含 my-docker 部署配置）
+- 分支：`main` 跟踪上游（纯净） / `wkj-dev` 二开（文档与部署说明）
+- 部署配置：`docker/compose/hindsight/`（统一在 my-agent-group 根 `docker/` 目录管理，代码目录不存映射数据）
+  - Compose: `/Users/weikejia/CODE/my-agent-group/docker/compose/hindsight/docker-compose.yaml`
+  - 数据: `/Users/weikejia/CODE/my-agent-group/docker/vols/hindsight/pg_data/`
 
 ## 部署方式
 
-详见 `README.md` 或 `docker/` 目录。
+```bash
+cd /Users/weikejia/CODE/my-agent-group/docker/compose/hindsight
+cp .env.example .env   # 首次：填入 MiniMax key + DB 密码
+docker compose up -d
+# API: http://localhost:8888   控制面板: http://localhost:9999
+```
