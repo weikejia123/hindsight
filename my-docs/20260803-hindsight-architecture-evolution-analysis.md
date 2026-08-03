@@ -162,3 +162,281 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 | MemoryUnit 模型（无 level/layer 字段） | `engine/memories/base.py:123-143` |
 | 可插拔存储后端 | commit `b769045b`（#2917） |
 | knowledge pages（平级上的新能力） | `alembic/versions/a9b8c7d6e5f4_add_knowledge_pages.py` |
+
+---
+
+## 五、当前版本（v0.8.4）全部实体表结构
+
+> 数据来源：运行中数据库 `hindsight-db`（迁移链最终态，`information_schema.columns` 实查），共 **20 张实体表**（另含 `alembic_version` 元数据表）。
+> 类型说明：`vector` = pgvector 嵌入列（psql 显示 USER-DEFINED）；`varchar[]` = 数组；`tsvector` = 全文搜索向量。
+
+### 核心记忆表
+
+#### 1. `banks` — 记忆库（唯一隔离维度）
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| bank_id | text | NO | —（主键） |
+| name | text | YES | — |
+| disposition | jsonb | NO | `{"empathy":3,"literalism":3,"skepticism":3}`（性格 1-5，影响 reflect） |
+| mission | text | YES | —（身份使命） |
+| config | jsonb | NO | `{}`（per-bank 配置） |
+| internal_id | uuid | NO | gen_random_uuid() |
+| created_at / updated_at | timestamptz | NO | now() |
+| last_consolidated_at | timestamptz | YES | — |
+| mission_changed_at | timestamptz | YES | — |
+
+#### 2. `documents` — 原始输入
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | text | NO | —（主键） |
+| bank_id | text | NO | — |
+| original_text | text | YES | — |
+| content_hash | text | YES | — |
+| retain_params | jsonb | YES | — |
+| tags | varchar[] | NO | `{}` |
+| file_storage_key / file_original_name / file_content_type | text | YES | —（文件类文档） |
+| created_at / updated_at | timestamptz | NO | now() |
+
+#### 3. `chunks` — 文档分块
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| chunk_id | text | NO | —（主键） |
+| document_id | text | NO | — |
+| bank_id | text | NO | — |
+| chunk_index | integer | NO | — |
+| chunk_text | text | NO | — |
+| content_hash | text | YES | — |
+| created_at | timestamptz | NO | now() |
+
+#### 4. `memory_units` — 核心记忆单元（单表平级，fact_type 区分类型）
+
+| 列 | 类型 | 可空 | 默认值 | 说明 |
+|----|------|------|--------|------|
+| id | uuid | NO | gen_random_uuid() | 主键 |
+| bank_id | text | NO | — | 隔离维度 |
+| document_id | text | YES | — | 溯源 |
+| text | text | NO | — | 记忆内容 |
+| embedding | vector | YES | — | 语义向量 |
+| context | text | YES | — | 上下文 |
+| event_date / occurred_start / occurred_end / mentioned_at | timestamptz | YES | — | 时间维度 |
+| **fact_type** | text | NO | `'world'` | **类型：world / experience / observation** |
+| access_count | integer | NO | 0 | 访问计数 |
+| metadata | jsonb | NO | `{}` | 元数据（含 harness 标记） |
+| chunk_id | text | YES | — | 分块溯源 |
+| tags | varchar[] | NO | `{}` | 标签 |
+| proof_count | integer | YES | 1 | 支持该观测的事实数 |
+| source_memory_ids | uuid[] | YES | `{}` | 归纳来源（observation 用） |
+| consolidated_at | timestamptz | YES | — | 归纳时间 |
+| observation_scopes | jsonb | YES | — | 观测作用域 |
+| text_signals | text | YES | — | 文本信号 |
+| search_vector | tsvector | YES | — | BM25 全文索引 |
+| consolidation_failed_at | timestamptz | YES | — | 归纳失败标记 |
+| edited_at | timestamptz | YES | — | 编辑时间（curation） |
+| created_at / updated_at | timestamptz | NO | now() | |
+
+#### 5. `invalidated_memory_units` — 作废记忆（reversible curation）
+
+结构 = memory_units 超集（作废后保留原文供恢复/审计），额外列：
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id / bank_id / document_id / text / context / event_date / occurred_start / occurred_end / mentioned_at / fact_type / access_count / metadata / chunk_id / tags / proof_count / source_memory_ids / consolidated_at / observation_scopes / text_signals / search_vector / consolidation_failed_at / edited_at | 同 memory_units | — | — |
+| entity_ids | uuid[] | YES | — |
+| invalidation_reason | text | YES | — |
+| invalidated_at | timestamptz | YES | now() |
+| created_at / updated_at | timestamptz | NO | now() |
+
+### 知识图谱表
+
+#### 6. `entities` — 实体
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | uuid | NO | gen_random_uuid() |
+| canonical_name | text | NO | —（规范化名称） |
+| bank_id | text | NO | — |
+| metadata | jsonb | NO | `{}` |
+| first_seen / last_seen | timestamptz | NO | now() |
+| mention_count | integer | NO | 1 |
+
+#### 7. `unit_entities` — 记忆单元-实体关联（junction）
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| unit_id | uuid | NO | —（FK → memory_units.id） |
+| entity_id | uuid | NO | —（FK → entities.id） |
+
+#### 8. `entity_cooccurrences` — 实体共现
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| entity_id_1 | uuid | NO | — |
+| entity_id_2 | uuid | NO | — |
+| cooccurrence_count | integer | NO | 1 |
+| last_cooccurred | timestamptz | NO | now() |
+
+#### 9. `memory_links` — 记忆间关联边
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| from_unit_id | uuid | NO | —（FK） |
+| to_unit_id | uuid | NO | —（FK） |
+| link_type | text | NO | —（如 caused_by） |
+| entity_id | uuid | YES | — |
+| weight | double precision | NO | 1.0 |
+| bank_id | text | NO | — |
+| created_at | timestamptz | NO | now() |
+
+### 知识/规则表
+
+#### 10. `directives` — 硬规则（唯一保留独立表的例外）
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | uuid | NO | gen_random_uuid() |
+| bank_id | text | NO | — |
+| name | varchar | NO | — |
+| content | text | NO | — |
+| priority | integer | NO | 0 |
+| is_active | boolean | NO | true |
+| tags | varchar[] | YES | `{}` |
+| created_at / updated_at | timestamptz | NO | now() |
+
+#### 11. `mental_models` — reflect 响应（注意：非旧分层表）
+
+> 由原 `reflections`（pinned_reflections）改名而来，存储 **reflect 推理产物**，与 memory_units 中的 observation（fact_type）是不同概念。
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | text | NO | gen_random_uuid() |
+| bank_id | text | NO | — |
+| name | varchar | NO | — |
+| source_query | text | NO | — |
+| content | text | NO | — |
+| embedding | vector | YES | — |
+| tags | varchar[] | YES | `{}` |
+| reflect_response | jsonb | YES | — |
+| max_tokens | integer | NO | 2048 |
+| trigger | jsonb | NO | `{"refresh_after_consolidation":false}` |
+| structured_content | jsonb | YES | — |
+| subtype | varchar | NO | `'structural'` |
+| description | text | NO | `''` |
+| entity_id | uuid | YES | — |
+| observations | jsonb | YES | `{"observations":[]}` |
+| links | ARRAY | YES | — |
+| last_refreshed_at / last_refreshed_source_query / last_updated | — | YES | — |
+| search_vector | tsvector | YES | — |
+| created_at | timestamptz | NO | now() |
+
+#### 12. `mental_model_history` — reflect 响应历史
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | bigint | NO | —（自增） |
+| mental_model_id | varchar | NO | — |
+| bank_id | text | NO | — |
+| content | jsonb | NO | — |
+| changed_at | timestamptz | NO | now() |
+
+#### 13. `observation_history` — observation 变更历史
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | bigint | NO | —（自增） |
+| observation_id | uuid | NO | —（FK → memory_units.id） |
+| bank_id | text | NO | — |
+| content | jsonb | NO | — |
+| changed_at | timestamptz | NO | now() |
+
+### 运维/追踪表
+
+#### 14. `async_operations` — 异步操作队列
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| operation_id | uuid | NO | gen_random_uuid() |
+| bank_id | text | NO | — |
+| operation_type | text | NO | — |
+| status | text | NO | `'pending'` |
+| task_payload | jsonb | YES | — |
+| worker_id / claimed_at | — | YES | — |
+| retry_count | integer | NO | 0 |
+| next_retry_at | timestamptz | YES | — |
+| result_metadata | jsonb | NO | `{}` |
+| error_message | text | YES | — |
+| created_at / updated_at / completed_at | timestamptz | — | — |
+
+#### 15. `llm_requests` — LLM 调用追踪（OTel）
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | uuid | NO | gen_random_uuid() |
+| bank_id / operation / scope | text | YES | — |
+| trace_id / span_id / parent_span_id | text | YES | — |
+| provider / model | text | YES | — |
+| status | text | NO | — |
+| duration_ms | integer | YES | — |
+| input_tokens / output_tokens / cached_tokens / total_tokens | integer | YES | — |
+| input / output / error | jsonb | YES | — |
+| llm_info / metadata | jsonb | YES | `{}` |
+| started_at / ended_at | timestamptz | — | — |
+
+#### 16. `audit_log` — 审计日志
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | uuid | NO | gen_random_uuid() |
+| action | text | NO | — |
+| transport | text | NO | — |
+| bank_id | text | YES | — |
+| request / response / metadata | jsonb | YES | — |
+| started_at / ended_at | timestamptz | — | — |
+
+#### 17. `webhooks` — Webhook 配置
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| id | uuid | NO | gen_random_uuid() |
+| bank_id | text | YES | — |
+| url | text | NO | — |
+| secret | text | YES | — |
+| event_types | text[] | NO | `{}` |
+| enabled | boolean | NO | true |
+| http_config | jsonb | NO | `{}` |
+| created_at / updated_at | timestamptz | NO | now() |
+
+#### 18. `file_storage` — 文件存储（大文件）
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| storage_key | text | NO | —（主键） |
+| data | bytea | NO | — |
+
+#### 19. `bank_stats_cache` — bank 统计缓存
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| bank_id | text | NO | — |
+| payload | jsonb | NO | — |
+| computed_at | timestamptz | NO | now() |
+
+#### 20. `graph_maintenance_queue` — 图谱维护队列
+
+| 列 | 类型 | 可空 | 默认值 |
+|----|------|------|--------|
+| bank_id | text | NO | — |
+| unit_id | uuid | NO | — |
+| enqueued_at | timestamptz | NO | now() |
+
+---
+
+## 六、表结构解读（与架构演进的关系）
+
+1. **memory_units 是唯一记忆主表**：20 张表中，承载"记忆内容"的只有 memory_units（+ invalidated_memory_units 作废副本）。其余 18 张表是支撑件：溯源（documents/chunks）、图谱（entities/entity_cooccurrences/unit_entities/memory_links）、规则与推理（directives/mental_models）、追踪（async_operations/llm_requests/audit_log）、辅助（webhooks/file_storage/bank_stats_cache/graph_maintenance_queue）、历史（mental_model_history/observation_history）。
+2. **observation 无独立表**：observation 的溯源字段（proof_count/source_memory_ids/observation_scopes）全部内嵌在 memory_units 列中——这就是"分层→平级"的落点。
+3. **directives 是唯一例外**：硬规则不参与"检索-归纳-遗忘"生命周期，保留独立表（印证第四节判据）。
+4. **mental_models 表名易误导**：它是 reflect 响应（推理产物，用户可刷新），不是旧分层架构的 mental_models 表——旧表已 DROP，此表由 reflections 改名而来。
+5. **observation_sources 表不存在**：迁移链中曾创建（k6l7m8n9o0p1），最终架构未保留——observation 来源改由 memory_units 列承载，再次印证"能内嵌就不建表"的收敛原则。
