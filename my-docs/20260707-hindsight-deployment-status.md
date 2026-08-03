@@ -3,7 +3,7 @@
 | 字段 | 值 |
 |------|-----|
 | 部署日期 | 2026-07-07 |
-| 版本 | `ghcr.io/vectorize-io/hindsight:latest`（v0.8.4） |
+| 版本 | `hindsight-local:v0.8.6-wkj`（官方 v0.8.6 + 本地源码覆盖，alembic head a9b8c7d6e5f4） |
 | 分支 | `wkj-dev` |
 | 上游 | `github.com/vectorize-io/hindsight` |
 
@@ -24,7 +24,7 @@
 │  │          │                  │           │           │
 │  │          │ MiniMax API      │           │ localhost │
 │  │          ▼                  │           ▼           │
-│  │  api.minimaxi.com/v1       │  my-docker-vol/       │
+│  │  api.minimaxi.com/v1       │  docker/vols/        │
 │  │  model: MiniMax-M2.7       │  hindsight/pg_data/   │
 │  │                            │                       │
 │  │  Ollama (宿主机)            │                       │
@@ -38,7 +38,7 @@
 
 | 容器 | 镜像 | 端口 | 用途 |
 |------|------|------|------|
-| `hindsight-app` | `ghcr.io/vectorize-io/hindsight:latest` | 8888/9999 | API + 控制面板 |
+| `hindsight-app` | `hindsight-local:v0.8.6-wkj` | 8888/9999 | API + 控制面板 |
 | `hindsight-db` | `pgvector/pgvector:pg18` | 5432（容器内） | PostgreSQL + pgvector |
 
 ### 外部依赖
@@ -53,19 +53,18 @@
 ## 二、配置结构
 
 ```
-my-agent-group/projects/my-forks/vectorize-io/hindsight/
-├── my-docker/                          # Docker 部署配置（自包含）
-│   ├── docker-compose.yaml             # 主 Compose 文件（project name: hindsight）
-│   ├── .env                            # 密钥（.gitignore 排除）
-│   ├── .env.example                    # 环境变量模板
-│   ├── KEYS.md                         # 密钥说明文档
-│   └── start.sh                        # 一键启动脚本
-├── my-docker-vol/                      # 持久化数据（.gitignore 排除）
-│   └── hindsight/pg_data/              # PostgreSQL 数据库文件（bind mount）
-├── my-docs/                            # 项目文档
-│   ├── 20260707-hindsight-docker-deploy-analysis.md   # 部署分析
-│   └── 20260707-hindsight-deployment-status.md        # 本文件：部署状态
-└── README-WAKE.md                      # 项目入口文档
+my-agent-group/docker/                       # 部署统一管理（代码目录不存映射数据）
+├── compose/hindsight/                       # Docker 部署配置
+│   ├── docker-compose.yaml                  # 主 Compose 文件（project name: hindsight）
+│   ├── .env                                 # 密钥（.gitignore 排除）
+│   ├── .env.example                         # 环境变量模板
+│   ├── KEYS.md                              # 密钥说明文档
+│   └── start.sh                             # 一键启动脚本
+└── vols/hindsight/pg_data/                  # 持久化数据（.gitignore 排除）
+                                             # PostgreSQL 数据库文件（bind mount）
+
+代码管理: my-agent-group/projects/memory/hindsight/（wkj-dev 分支）
+项目文档: my-docs/（部署分析 + 部署状态 + 架构演进分析等）
 ```
 
 ### 关键配置说明
@@ -81,7 +80,7 @@ my-agent-group/projects/my-forks/vectorize-io/hindsight/
 - bge-m3 模型 1024 维，中文最优
 
 **数据持久化**：
-- 使用 bind mount `../my-docker-vol/hindsight/pg_data/` 而非 Docker named volume
+- 使用 bind mount `docker/vols/hindsight/pg_data/`（绝对路径）而非 Docker named volume
 - `docker compose down -v` 不会删数据
 - 重建容器时数据完整保留
 
@@ -92,7 +91,7 @@ my-agent-group/projects/my-forks/vectorize-io/hindsight/
 ### 启动日志
 
 ```bash
-$ cd my-docker && docker compose start
+$ cd docker/compose/hindsight && docker compose up -d
 Container hindsight-db Starting
 Container hindsight-db Started
 Container hindsight-db Healthy
@@ -165,10 +164,10 @@ curl https://api.minimaxi.com/v1/chat/completions → HTTP 200
 ### 启动/停止
 
 ```bash
-cd my-docker
+cd /Users/weikejia/CODE/my-agent-group/docker/compose/hindsight
 
 # 启动
-docker compose start
+docker compose up -d
 
 # 停止（保留数据）
 docker compose stop
@@ -184,12 +183,12 @@ docker compose logs -f hindsight-db    # 只看数据库
 
 ### 数据备份
 
-数据目录：`my-docker-vol/hindsight/pg_data/`（bind mount，可直接备份）
+数据目录：`/Users/weikejia/CODE/my-agent-group/docker/vols/hindsight/pg_data/`（bind mount，可直接备份）
 
 ```bash
 # 安全备份（先停止数据库写操作）
 docker compose stop hindsight-db
-cp -a ../my-docker-vol/hindsight/pg_data/ /backup/hindsight-pg-$(date +%Y%m%d)/
+cp -a /Users/weikejia/CODE/my-agent-group/docker/vols/hindsight/pg_data/ /backup/hindsight-pg-$(date +%Y%m%d)/
 docker compose start hindsight-db
 ```
 

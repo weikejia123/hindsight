@@ -165,9 +165,10 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 
 ---
 
-## 五、当前版本（v0.8.4）全部实体表结构
+## 五、当前版本（v0.8.6-wkj）全部实体表结构
 
-> 数据来源：运行中数据库 `hindsight-db`（迁移链最终态，`information_schema.columns` 实查），共 **20 张实体表**（另含 `alembic_version` 元数据表）。
+> 数据来源：运行中数据库 `hindsight-db`（迁移链最终态，`information_schema.columns` 实查），共 **21 张实体表**（另含 `alembic_version` 元数据表）。
+> 版本基线：本地部署镜像 `hindsight-local:v0.8.6-wkj`（官方 v0.8.6 + 本地源码覆盖，alembic head `a9b8c7d6e5f4`）。文档、代码、实际部署三者一致（2026-08-03 核查）。
 > 类型说明：`vector` = pgvector 嵌入列（psql 显示 USER-DEFINED）；`varchar[]` = 数组；`tsvector` = 全文搜索向量。
 
 ### 核心记忆表
@@ -243,11 +244,14 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 
 | 列 | 类型 | 可空 | 默认值 |
 |----|------|------|--------|
-| id / bank_id / document_id / text / context / event_date / occurred_start / occurred_end / mentioned_at / fact_type / access_count / metadata / chunk_id / tags / proof_count / source_memory_ids / consolidated_at / observation_scopes / text_signals / search_vector / consolidation_failed_at / edited_at | 同 memory_units | — | — |
+| id / bank_id / document_id / text / context / event_date / occurred_start / occurred_end / mentioned_at / fact_type / access_count / metadata / chunk_id / tags / proof_count / source_memory_ids / consolidated_at / observation_scopes / text_signals / consolidation_failed_at / edited_at | 同 memory_units | — | — |
 | entity_ids | uuid[] | YES | — |
+| causal_links | jsonb | NO | `[]`（因果边描述，供 revert 重放，迁移 c7d1e9a4b3f2） |
 | invalidation_reason | text | YES | — |
 | invalidated_at | timestamptz | YES | now() |
 | created_at / updated_at | timestamptz | NO | now() |
+
+> 注：归档表**无** `search_vector` 列（迁移 e7c3a9f1b2d5 已删除——归档非检索面，避免非原生搜索后端类型不匹配 #2503）；**无** `embedding` 列（同 d4f6a8c2e1b3 删除，理由相同）。
 
 ### 知识图谱表
 
@@ -346,7 +350,7 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 | 列 | 类型 | 可空 | 默认值 |
 |----|------|------|--------|
 | id | bigint | NO | —（自增） |
-| observation_id | uuid | NO | —（FK → memory_units.id） |
+| observation_id | uuid | NO | —（无 FK——迁移 a1c9e7f3b2d8 已删除到 memory_units 的外键，改显式清理） |
 | bank_id | text | NO | — |
 | content | jsonb | NO | — |
 | changed_at | timestamptz | NO | now() |
@@ -431,11 +435,30 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 | unit_id | uuid | NO | — |
 | enqueued_at | timestamptz | NO | now() |
 
+### 知识库表（v0.8.6 新增）
+
+#### 21. `knowledge_pages` — 知识库层级（文件夹/页面）
+
+> 迁移 `a9b8c7d6e5f4`（2026-07-30，knowledge-base feature）新增。知识库把 mental_models 组织成可导航的文件夹树：
+> 页面（`kind='page'`）引用 mental model 作为内容，文件夹（`kind='folder'`）是纯容器（mental_model_id NULL）。
+
+| 列 | 类型 | 可空 | 默认值 | 说明 |
+|----|------|------|--------|------|
+| id | varchar(64) | NO | —（主键） | |
+| bank_id | text | NO | —（FK → banks，级联删） | 隔离维度 |
+| parent_id | varchar(64) | YES | —（自引用 FK → knowledge_pages.id，级联删） | 文件夹嵌套 |
+| kind | varchar(16) | NO | —（CHECK: folder/page） | 节点类型 |
+| name | text | NO | —（文件夹内页面名唯一，COALESCE(parent_id,'')+lower(name) 部分唯一索引） | |
+| mental_model_id | varchar(64) | YES | —（复合 FK → mental_models(id,bank_id)，级联删） | 页面内容来源 |
+| sort_order | integer | NO | 0 | 排序 |
+| managed | boolean | NO | false | 系统拥有 vs 手写 |
+| created_at / updated_at | timestamptz | NO | now() | |
+
 ---
 
 ## 六、表结构解读（与架构演进的关系）
 
-1. **memory_units 是唯一记忆主表**：20 张表中，承载"记忆内容"的只有 memory_units（+ invalidated_memory_units 作废副本）。其余 18 张表是支撑件：溯源（documents/chunks）、图谱（entities/entity_cooccurrences/unit_entities/memory_links）、规则与推理（directives/mental_models）、追踪（async_operations/llm_requests/audit_log）、辅助（webhooks/file_storage/bank_stats_cache/graph_maintenance_queue）、历史（mental_model_history/observation_history）。
+1. **memory_units 是唯一记忆主表**：21 张表中，承载"记忆内容"的只有 memory_units（+ invalidated_memory_units 作废副本）。其余 19 张表是支撑件：溯源（documents/chunks）、图谱（entities/entity_cooccurrences/unit_entities/memory_links）、规则与推理（directives/mental_models）、知识库（knowledge_pages）、追踪（async_operations/llm_requests/audit_log）、辅助（webhooks/file_storage/bank_stats_cache/graph_maintenance_queue）、历史（mental_model_history/observation_history）。
 2. **observation 无独立表**：observation 的溯源字段（proof_count/source_memory_ids/observation_scopes）全部内嵌在 memory_units 列中——这就是"分层→平级"的落点。
 3. **directives 是唯一例外**：硬规则不参与"检索-归纳-遗忘"生命周期，保留独立表（印证第四节判据）。
 4. **mental_models 表名易误导**：它是 reflect 响应（推理产物，用户可刷新），不是旧分层架构的 mental_models 表——旧表已 DROP，此表由 reflections 改名而来。
@@ -447,7 +470,7 @@ world / experience / observation 是**同一连续谱**：事实（低抽象）�
 
 > 依据：数据库 `pg_constraint` 实查外键约束（2026-08-03）。复合外键（如 documents 的 bank_id+document_id）在逻辑图中简化为单边关系。
 
-### 7.1 记忆核心 ER（10 张表，全部真实外键）
+### 7.1 记忆核心 ER（10 张表，真实外键；虚线 = 无 FK 逻辑关联）
 
 ```mermaid
 erDiagram
@@ -460,13 +483,13 @@ erDiagram
     MEMORY_UNITS ||--o{ MEMORY_LINKS : "来源单元"
     MEMORY_UNITS ||--o{ MEMORY_LINKS : "目标单元"
     MEMORY_UNITS ||--o{ UNIT_ENTITIES : "标注实体"
-    MEMORY_UNITS ||--o{ OBSERVATION_HISTORY : "变更历史"
+    MEMORY_UNITS ..o{ OBSERVATION_HISTORY : "变更历史（FK 已删，a1c9e7f3b2d8）"
     ENTITIES ||--o{ UNIT_ENTITIES : "被标注"
     ENTITIES ||--o{ ENTITY_COOCCURRENCES : "共现"
     ENTITIES ||--o{ MEMORY_LINKS : "经实体连接"
 ```
 
-### 7.2 规则 / 推理 / 运维 ER（5 张表，真实外键）
+### 7.2 规则 / 推理 / 运维 ER（6 张表，真实外键）
 
 ```mermaid
 erDiagram
@@ -474,7 +497,10 @@ erDiagram
     BANKS ||--o{ MENTAL_MODELS : "推理产物"
     BANKS ||--o{ WEBHOOKS : "通知配置"
     BANKS ||--o{ ASYNC_OPERATIONS : "异步任务"
+    BANKS ||--o{ KNOWLEDGE_PAGES : "知识库节点"
     MENTAL_MODELS ||--o{ MENTAL_MODEL_HISTORY : "变更历史"
+    MENTAL_MODELS ||--o{ KNOWLEDGE_PAGES : "页面内容"
+    KNOWLEDGE_PAGES ||--o{ KNOWLEDGE_PAGES : "文件夹嵌套"
 ```
 
 ### 7.3 无外键约束的表（逻辑关联）
@@ -508,6 +534,7 @@ flowchart LR
     BANKS --> MENTAL_MODELS
     BANKS --> WEBHOOKS
     BANKS --> ASYNC_OPERATIONS
+    BANKS --> KNOWLEDGE_PAGES
     BANKS -.-> LLM_REQUESTS
     BANKS -.-> AUDIT_LOG
     BANKS -.-> BANK_STATS_CACHE
@@ -519,11 +546,13 @@ flowchart LR
     CHUNKS --> MEMORY_UNITS
     MEMORY_UNITS --> MEMORY_LINKS
     MEMORY_UNITS --> UNIT_ENTITIES
-    MEMORY_UNITS --> OBSERVATION_HISTORY
+    MEMORY_UNITS -.-> OBSERVATION_HISTORY
     ENTITIES --> UNIT_ENTITIES
     ENTITIES --> ENTITY_COOCCURRENCES
     ENTITIES --> MEMORY_LINKS
     MENTAL_MODELS --> MENTAL_MODEL_HISTORY
+    MENTAL_MODELS --> KNOWLEDGE_PAGES
+    KNOWLEDGE_PAGES --> KNOWLEDGE_PAGES
 ```
 
 > 图例：`-->` = 真实外键；`-.->` = 逻辑关联（无 FK 约束）
@@ -532,21 +561,24 @@ flowchart LR
 
 ## 八、对外 API 数据流转时序图（一个 API 一张图）
 
-> 依据：运行中 API 的 OpenAPI schema（localhost:8888/openapi.json，v0.8.4，56 端点）+ 源码调用链。
+> 依据：运行中 API 的 OpenAPI schema（localhost:8888/openapi.json，v0.8.6，84 端点 / 64 路径）+ 源码调用链。
 > 参与者：`Client` 调用方 → `API` FastAPI 路由 → `Engine` MemoryEngine → `LLM` 事实提取/合成 → `Embedder` 向量嵌入（本地 bge-m3）→ `PG` PostgreSQL 实体表。
 > 图中消息标注**字段级流转**：请求体字段 → 引擎处理 → 落表字段。
 
-### 8.0 API 总览（56 端点分类）
+### 8.0 API 总览（84 端点分类）
 
 | 分类 | 端点 | 数量 |
 |------|------|------|
-| 核心记忆操作 | memories（retain/recall）、reflect、consolidate | 4 |
-| bank 管理 | banks CRUD、profile、config、background、stats | 10 |
+| 核心记忆操作 | memories（retain/recall）、reflect、consolidate、consolidation/recover | 5 |
+| bank 管理 | banks CRUD、profile、config、background、stats、tags、export/import、bank-template-schema | 16 |
 | 文档管理 | documents CRUD、chunks、reprocess、transfer、files/retain | 10 |
-| 记忆管理 | memories/list、curate、history、dry-run、observations | 8 |
-| 知识图谱 | entities、entities/graph、graph | 3 |
-| 规则与推理 | directives CRUD、mental-models CRUD+refresh | 11 |
-| 运维 | operations、llm-requests、audit-logs、webhooks、health、metrics、version | 10 |
+| 记忆管理 | memories/list、dry-run-extract、curate、history、observations | 10 |
+| 知识图谱 | entities、entities/graph、entities/{id}/regenerate、graph | 4 |
+| 规则与推理 | directives CRUD、mental-models CRUD+refresh+clear+history | 14 |
+| **知识库（v0.8.6 新增）** | knowledge-base folders/pages/tree/search/export/nodes | **8** |
+| 运维 | operations（含 retry/delete）、llm-requests、audit-logs、webhooks（含 deliveries）、health、metrics、version | 17 |
+
+> 说明：v0.8.4 为 56 端点；v0.8.6 新增 28 个（含 knowledge-base 8 个、operations retry/delete、webhooks deliveries、audit/llm stats 等）。
 
 ### 8.1 Retain — POST /v1/default/banks/{bank_id}/memories（存记忆，走 LLM）
 
@@ -831,3 +863,23 @@ sequenceDiagram
 | 请求关键字段 | 落表（写） | 读表 |
 |------------|-----------|------|
 | — | mental_models、mental_model_history | mental_models |
+
+### 8.11 Knowledge Base — 知识库管理（v0.8.6 新增）
+
+**中文说明**：把 reflect 生成的 mental models 组织成可导航的文件夹/页面树（`knowledge_pages` 表），客户端可创建文件夹、挂载页面、检索、导出。
+
+**场景流程**：将高频 mental models 沉淀为可浏览知识库时调用。核心端点：
+
+| 端点 | 方法 | 说明 | 读写表 |
+|------|------|------|--------|
+| `knowledge-base/folders` | POST | 创建文件夹节点 | knowledge_pages（kind=folder） |
+| `knowledge-base/pages` | POST | 创建页面节点（引用 mental_model_id） | knowledge_pages（kind=page） |
+| `knowledge-base/pages/{page_id}` | GET/DELETE | 查看/删除页面 | knowledge_pages |
+| `knowledge-base/nodes/{node_id}` | PATCH/DELETE | 更新/删除任意节点 | knowledge_pages |
+| `knowledge-base/tree` | GET | 获取全树 | knowledge_pages（递归） |
+| `knowledge-base/search` | GET | 按名称检索页面 | knowledge_pages |
+| `knowledge-base/export` | GET | 导出知识库 | knowledge_pages + mental_models |
+
+| 请求关键字段 | 落表（写） | 读表 |
+|------------|-----------|------|
+| name / kind / parent_id / mental_model_id | knowledge_pages | knowledge_pages、mental_models |
