@@ -67,10 +67,18 @@ export interface BankStats {
   failed_operations: number;
   operations_by_status?: Record<string, number>;
   last_consolidated_at: string | null;
+  /** Last time a memory was stored, edited or consolidated. Null on an empty bank. */
+  last_memory_write_at: string | null;
   pending_consolidation: number;
   failed_consolidation: number;
   total_observations: number;
 }
+
+/** What the mental-models card reads — everything a `detail=metadata` list returns. */
+type MentalModelSummary = Pick<
+  MentalModel,
+  "id" | "name" | "last_refreshed_at" | "last_memory_seen_at"
+>;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
@@ -703,20 +711,30 @@ function FailedConsolidationsDialog({
 
 function MentalModelsCard({
   models,
-  lastConsolidatedAt,
+  lastMemoryWriteAt,
 }: {
-  models: MentalModel[];
-  lastConsolidatedAt: string | null;
+  models: MentalModelSummary[];
+  lastMemoryWriteAt: string | null;
 }) {
   const t = useTranslations("bankStats");
   const total = models.length;
-  const consolidatedTime = lastConsolidatedAt ? new Date(lastConsolidatedAt).getTime() : 0;
+  // Freshness against the bank's last memory write, not the last consolidation:
+  // a model that has seen memories at or after it is provably current, whatever
+  // its tags. The other direction is only "may need refresh" — the write could
+  // have landed outside the model's scope, and confirming that costs a scan of the
+  // bank's memories per model, so the exact answer lives on the model's own dialog.
+  //
+  // This compares last_memory_seen_at — how far through the memories the model is
+  // written — never last_refreshed_at, which is only when a refresh last ran and
+  // would report every recently-refreshed model as current even when it is behind.
+  const lastWriteTime = lastMemoryWriteAt ? new Date(lastMemoryWriteAt).getTime() : 0;
   const upToDate = models.filter((m) => {
-    if (!consolidatedTime) return true;
-    if (!m.last_refreshed_at) return false;
-    return new Date(m.last_refreshed_at).getTime() >= consolidatedTime;
+    if (!lastWriteTime) return true;
+    const seenAt = m.last_memory_seen_at ?? m.last_refreshed_at;
+    if (!seenAt) return false;
+    return new Date(seenAt).getTime() >= lastWriteTime;
   }).length;
-  const stale = total - upToDate;
+  const mayNeedRefresh = total - upToDate;
 
   return (
     <Card>
@@ -748,11 +766,11 @@ function MentalModelsCard({
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3 text-amber-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("stale")}
+                    {t("mayNeedRefresh")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {stale}
+                  {mayNeedRefresh}
                 </span>
               </div>
               <div className="space-y-0.5">
@@ -1064,7 +1082,7 @@ export function BankStatsView() {
   const { features } = useFeatures();
   const observationsEnabled = features?.observations ?? false;
   const [stats, setStats] = useState<BankStats | null>(null);
-  const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
+  const [mentalModels, setMentalModels] = useState<MentalModelSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
   const loadData = async () => {
@@ -1074,10 +1092,13 @@ export function BankStatsView() {
     try {
       const [statsData, mentalModelsData] = await Promise.all([
         client.getBankStats(currentBank),
-        client.listMentalModels(currentBank),
+        // The card counts every model's freshness, so it needs the whole set, not
+        // the first page. It reloads every few seconds — metadata keeps the stored
+        // reflect payloads off the wire.
+        client.listAllMentalModels(currentBank, { detail: "metadata" }),
       ]);
       setStats(statsData as BankStats);
-      setMentalModels(mentalModelsData.items || []);
+      setMentalModels(mentalModelsData);
     } catch (error) {
       console.error("Error loading bank stats:", error);
     } finally {
@@ -1103,7 +1124,13 @@ export function BankStatsView() {
 
   if (!stats) return null;
 
-  const consolidatedDone = Math.max(0, stats.total_nodes - stats.pending_consolidation);
+  // Done / pending / failed are shown side by side and must not overlap: the API's
+  // pending_consolidation already excludes permanently failed memories, so those are
+  // subtracted here too rather than being counted as done.
+  const consolidatedDone = Math.max(
+    0,
+    stats.total_nodes - stats.pending_consolidation - (stats.failed_consolidation ?? 0)
+  );
 
   return (
     <div className="space-y-8">
@@ -1124,7 +1151,7 @@ export function BankStatsView() {
             total={stats.total_nodes}
             lastConsolidatedAt={stats.last_consolidated_at}
           />
-          <MentalModelsCard models={mentalModels} lastConsolidatedAt={stats.last_consolidated_at} />
+          <MentalModelsCard models={mentalModels} lastMemoryWriteAt={stats.last_memory_write_at} />
         </div>
       </section>
 

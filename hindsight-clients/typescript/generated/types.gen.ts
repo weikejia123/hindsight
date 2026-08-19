@@ -232,7 +232,7 @@ export type BankConfigUpdate = {
   /**
    * Updates
    *
-   * Configuration overrides. Keys can be in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER). Only hierarchical fields can be overridden per-bank.
+   * Configuration overrides. Keys can be in Python field format (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE). Only hierarchical fields can be overridden per-bank.
    */
   updates: {
     [key: string]: unknown;
@@ -287,13 +287,27 @@ export type BankListItem = {
 /**
  * BankListResponse
  *
- * Response model for listing all banks.
+ * Response model for listing banks, one page at a time.
  */
 export type BankListResponse = {
   /**
    * Banks
    */
   banks: Array<BankListItem>;
+  /**
+   * Total
+   *
+   * Total number of banks visible to the caller, ignoring `limit`/`offset`.
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
 };
 
 /**
@@ -418,9 +432,15 @@ export type BankStatsResponse = {
    */
   last_consolidated_at?: string | null;
   /**
+   * Last Memory Write At
+   *
+   * When a memory was last written in this bank — stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_memory_seen_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm.
+   */
+  last_memory_write_at?: string | null;
+  /**
    * Pending Consolidation
    *
-   * Number of memories not yet processed into observations
+   * Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed — those are counted only in failed_consolidation — so this drains to 0 when the consolidator catches up.
    */
   pending_consolidation?: number;
   /**
@@ -495,6 +515,24 @@ export type BankTemplateConfig = {
    */
   observations_mission?: string | null;
   /**
+   * Enable Temporal Retrieval
+   *
+   * Toggle the temporal arm (and its date-aware query analysis) during recall
+   */
+  enable_temporal_retrieval?: boolean | null;
+  /**
+   * Enable Graph Retrieval
+   *
+   * Toggle the entity/link graph arm during recall
+   */
+  enable_graph_retrieval?: boolean | null;
+  /**
+   * Enable Reranking
+   *
+   * Toggle cross-encoder reranking during recall
+   */
+  enable_reranking?: boolean | null;
+  /**
    * Disposition Skepticism
    *
    * Skepticism trait (1-5)
@@ -517,9 +555,7 @@ export type BankTemplateConfig = {
    *
    * Controlled vocabulary for entity labels
    */
-  entity_labels?: Array<{
-    [key: string]: unknown;
-  }> | null;
+  entity_labels?: Array<LabelGroupOutput> | null;
   /**
    * Entities Allow Free Form
    *
@@ -662,6 +698,50 @@ export type BankTemplateConfig = {
    * Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.
    */
   store_document_text?: boolean | null;
+  /**
+   * Enable Auto Consolidation
+   *
+   * Automatically consolidate observations after retain
+   */
+  enable_auto_consolidation?: boolean | null;
+  /**
+   * Consolidation Max Memories Per Round
+   *
+   * Max memory units fed into a single consolidation round
+   */
+  consolidation_max_memories_per_round?: number | null;
+  /**
+   * Consolidation Llm Parallelism
+   *
+   * Number of consolidation LLM batches processed concurrently
+   */
+  consolidation_llm_parallelism?: number | null;
+  /**
+   * Recall Include Chunks
+   *
+   * Include raw chunks in recall results
+   */
+  recall_include_chunks?: boolean | null;
+  /**
+   * Recall Max Tokens
+   *
+   * Max tokens of results returned by recall
+   */
+  recall_max_tokens?: number | null;
+  /**
+   * Recall Chunks Max Tokens
+   *
+   * Max tokens of raw chunks returned by recall (when recall_include_chunks is set)
+   */
+  recall_chunks_max_tokens?: number | null;
+  /**
+   * Memory Defense
+   *
+   * Memory Defense policy for this bank (validated against the DefensePolicy schema on write)
+   */
+  memory_defense?: {
+    [key: string]: unknown;
+  } | null;
 };
 
 /**
@@ -1133,6 +1213,24 @@ export type CreateBankRequest = {
    * Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely.
    */
   observations_mission?: string | null;
+  /**
+   * Enable Temporal Retrieval
+   *
+   * Toggle the temporal retrieval arm during recall, together with the date-aware query analysis that feeds it. Useful for banks whose content carries no meaningful dates.
+   */
+  enable_temporal_retrieval?: boolean | null;
+  /**
+   * Enable Graph Retrieval
+   *
+   * Toggle the entity/link graph traversal arm during recall. Disabling trades relational recall for latency on banks whose content has little entity structure.
+   */
+  enable_graph_retrieval?: boolean | null;
+  /**
+   * Enable Reranking
+   *
+   * Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering directly, which is faster but less precise.
+   */
+  enable_reranking?: boolean | null;
 };
 
 /**
@@ -1168,7 +1266,7 @@ export type CreateDirectiveRequest = {
   /**
    * Tags
    *
-   * Tags for filtering
+   * Directive execution scope. Empty means global; non-empty requires a matching reflect scope.
    */
   tags?: Array<string>;
 };
@@ -1410,6 +1508,24 @@ export type DirectiveListResponse = {
    * Items
    */
   items: Array<DirectiveResponse>;
+  /**
+   * Total
+   *
+   * Total number of directives matching the filter (not just this page)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Page size that was applied
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset that was applied
+   */
+  offset: number;
 };
 
 /**
@@ -1480,6 +1596,27 @@ export type DispositionTraits = {
    * How much to consider emotional context (1=detached, 5=empathetic)
    */
   empathy: number;
+};
+
+/**
+ * DocumentExportSubmitResponse
+ *
+ * Response for the async document-export endpoint (202).
+ *
+ * The export runs in the background; poll the operations endpoint for status.
+ * On completion the operation's ``result_metadata`` carries ``download_url``
+ * (fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,
+ * ``byte_size``, and ``filename``.
+ */
+export type DocumentExportSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status?: string;
 };
 
 /**
@@ -1605,7 +1742,9 @@ export type DryRunExtractRequest = {
   /**
    * Agent Name
    *
-   * Narrator override (memory owner) primed in the prompt.
+   * Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.
+   *
+   * @deprecated
    */
   agent_name?: string | null;
   /**
@@ -1630,8 +1769,10 @@ export type DryRunExtractRequest = {
   retain_chunk_size?: number | null;
   /**
    * Entity Labels
+   *
+   * Controlled vocabulary for entity labels (overrides the bank's config for this call)
    */
-  entity_labels?: Array<unknown> | null;
+  entity_labels?: Array<LabelGroupInput> | null;
   /**
    * Entities Allow Free Form
    */
@@ -2118,9 +2259,13 @@ export type KnowledgeNode = {
   /**
    * Is Stale
    *
-   * Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint.
+   * Pages only, populated by the tree endpoint. False means the page is up to date — nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute.
    */
   is_stale?: boolean | null;
+  /**
+   * Pages only: the page's refresh settings — when it rebuilds itself (`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. This is the EFFECTIVE policy: a setting the page never stored is reported at its default, so compare the fields you care about rather than the whole object against a patch you sent. Absent on folders, which have no backing mental model, and on a page with no trigger stored.
+   */
+  trigger?: MentalModelTriggerOutput | null;
   /**
    * Children
    */
@@ -2263,6 +2408,26 @@ export type KnowledgeTreeResponse = {
    * Roots
    */
   roots: Array<KnowledgeNode>;
+};
+
+/**
+ * LLMCallTrace
+ *
+ * A single LLM call made during reflect.
+ */
+export type LlmCallTrace = {
+  /**
+   * Scope
+   *
+   * Call scope: agent_1, agent_2, final, etc.
+   */
+  scope: string;
+  /**
+   * Duration Ms
+   *
+   * Execution time in milliseconds
+   */
+  duration_ms: number;
 };
 
 /**
@@ -2469,6 +2634,98 @@ export type LlmRequestTokenSums = {
 };
 
 /**
+ * LabelGroup
+ *
+ * A label group (dimension) with its type and allowed values.
+ */
+export type LabelGroupInput = {
+  /**
+   * Key
+   */
+  key: string;
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Type
+   */
+  type?: "value" | "multi-values" | "text" | "map";
+  /**
+   * Optional
+   */
+  optional?: boolean;
+  /**
+   * Tag
+   */
+  tag?: boolean;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldInput;
+  };
+};
+
+/**
+ * LabelGroup
+ *
+ * A label group (dimension) with its type and allowed values.
+ */
+export type LabelGroupOutput = {
+  /**
+   * Key
+   */
+  key: string;
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Type
+   */
+  type?: "value" | "multi-values" | "text" | "map";
+  /**
+   * Optional
+   */
+  optional?: boolean;
+  /**
+   * Tag
+   */
+  tag?: boolean;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldOutput;
+  };
+};
+
+/**
+ * LabelValue
+ *
+ * A single allowed value for a label group.
+ */
+export type LabelValue = {
+  /**
+   * Value
+   */
+  value: string;
+  /**
+   * Description
+   */
+  description?: string;
+};
+
+/**
  * ListChunksResponse
  *
  * Response model for listing chunks of a document.
@@ -2569,6 +2826,32 @@ export type ListTagsResponse = {
 };
 
 /**
+ * LivenessResponse
+ *
+ * Payload for the API's DB-free liveness probe.
+ */
+export type LivenessResponse = {
+  /**
+   * Status
+   *
+   * Always "alive" — reaching this handler is the check
+   */
+  status: "alive";
+  /**
+   * Version
+   *
+   * Hindsight version this process is running
+   */
+  version: string;
+  /**
+   * Uptime Seconds
+   *
+   * Seconds since the process started
+   */
+  uptime_seconds: number;
+};
+
+/**
  * LlmOperationHealth
  *
  * LLM connectivity status for a single operation. Status only — no provider/model/
@@ -2599,6 +2882,58 @@ export type LlmOperationHealth = {
    * Round-trip latency of the probe call
    */
   latency_ms?: number | null;
+};
+
+/**
+ * MapField
+ *
+ * A field within a map-type entity label group. Supports recursion via type='map'.
+ */
+export type MapFieldInput = {
+  /**
+   * Type
+   */
+  type?: "text" | "value" | "multi-values" | "map";
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldInput;
+  };
+};
+
+/**
+ * MapField
+ *
+ * A field within a map-type entity label group. Supports recursion via type='map'.
+ */
+export type MapFieldOutput = {
+  /**
+   * Type
+   */
+  type?: "text" | "value" | "multi-values" | "map";
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldOutput;
+  };
 };
 
 /**
@@ -2666,7 +3001,7 @@ export type MemoryItem = {
   /**
    * Document Id
    *
-   * Optional document ID for this memory item.
+   * Optional document ID for this memory item. Provide a distinct document_id per source document — items sharing a document_id are grouped into the same document. Auto-generated when omitted.
    */
   document_id?: string | null;
   /**
@@ -2675,6 +3010,12 @@ export type MemoryItem = {
    * Optional entities to combine with auto-extracted entities.
    */
   entities?: Array<EntityInput> | null;
+  /**
+   * Resolve Entities
+   *
+   * Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.
+   */
+  resolve_entities?: boolean;
   /**
    * Tags
    *
@@ -2740,6 +3081,194 @@ export type MemoryTimeseriesBucket = {
 };
 
 /**
+ * MentalModelDeltaOperations
+ *
+ * Structured operations a delta refresh emitted against the existing document.
+ */
+export type MentalModelDeltaOperations = {
+  /**
+   * Applied
+   *
+   * Operations applied to the document, in order.
+   */
+  applied?: Array<{
+    [key: string]: unknown;
+  }>;
+  /**
+   * Skipped
+   *
+   * Operations dropped as invalid, each with a reason.
+   */
+  skipped?: Array<{
+    [key: string]: unknown;
+  }>;
+};
+
+/**
+ * MentalModelDryRunRefreshResult
+ *
+ * Preview of what a mental model refresh would do, having changed nothing.
+ *
+ * Runs the real pipeline — same scope resolution, same reflect call, same
+ * delta operations — then reports the result instead of persisting it. The
+ * model's content, structured content, watermark, and last_refreshed_at are
+ * all left untouched, so a delta dry run is repeatable: it reads the same
+ * window the next real refresh would.
+ */
+export type MentalModelDryRunRefreshResult = {
+  /**
+   * Mental Model Id
+   *
+   * The mental model previewed.
+   */
+  mental_model_id: string;
+  /**
+   * Name
+   *
+   * Display name of the mental model.
+   */
+  name: string;
+  /**
+   * Requested Mode
+   *
+   * The mode asked for (from the model's trigger, or overridden).
+   */
+  requested_mode: "full" | "delta";
+  /**
+   * Effective Mode
+   *
+   * The mode the refresh actually ran in.
+   */
+  effective_mode: "full" | "delta";
+  /**
+   * Mode Fallback Reason
+   *
+   * Why delta was requested but not applied, if that happened.
+   */
+  mode_fallback_reason?:
+    | "no_baseline_content"
+    | "source_query_changed"
+    | "structured_doc_unreadable"
+    | "delta_ops_failed"
+    | "delta_ops_all_skipped"
+    | null;
+  /**
+   * Outcome
+   *
+   * What a real refresh would do with the document.
+   */
+  outcome:
+    | "content_written"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied";
+  /**
+   * Would Persist
+   *
+   * Whether a real refresh would write new content.
+   */
+  would_persist: boolean;
+  /**
+   * The resolved memory scope.
+   */
+  scope: MentalModelRefreshScope;
+  /**
+   * The snapshot window read from.
+   */
+  window: MentalModelRefreshWindow;
+  /**
+   * Facts retrieved versus actually used.
+   */
+  facts: MentalModelFactCounts;
+  /**
+   * Based On
+   *
+   * The evidence this run would ground the document on, keyed by fact type — the same shape a refresh persists under reflect_response.based_on. Returned so a preview can show its sources without having to write them anywhere.
+   */
+  based_on?: {
+    [key: string]: Array<{
+      [key: string]: unknown;
+    }>;
+  };
+  /**
+   * Current Content
+   *
+   * The model's content as it stands now.
+   */
+  current_content: string;
+  /**
+   * Candidate Content
+   *
+   * Raw reflect synthesis, before any delta operations.
+   */
+  candidate_content: string;
+  /**
+   * Preview Content
+   *
+   * The content a real refresh would store: the delta-edited document, or the candidate in full mode.
+   */
+  preview_content: string;
+  /**
+   * Diff
+   *
+   * Unified diff from current_content to preview_content. Empty when identical.
+   */
+  diff: string;
+  /**
+   * Structured operations emitted, in delta mode.
+   */
+  delta_operations?: MentalModelDeltaOperations | null;
+  /**
+   * Execution trace of the run, always included for a dry run.
+   */
+  trace: MentalModelRefreshTrace;
+  /**
+   * Token usage across the run's LLM calls.
+   */
+  usage?: TokenUsage;
+  /**
+   * Duration Ms
+   *
+   * Wall-clock duration of the run.
+   */
+  duration_ms?: number;
+  /**
+   * Warnings
+   *
+   * Conditions worth a human's attention, in plain language.
+   */
+  warnings?: Array<string>;
+};
+
+/**
+ * MentalModelFactCounts
+ *
+ * Facts the refresh saw, keyed by fact type.
+ *
+ * ``retrieved`` and ``used`` diverging is the single most common cause of a
+ * disappointing refresh: recall found plenty, but the reflect agent declared
+ * none of it relevant to the topic, so none of it reached the document.
+ */
+export type MentalModelFactCounts = {
+  /**
+   * Retrieved
+   *
+   * Facts the reflect agent's tool calls returned, by fact type.
+   */
+  retrieved?: {
+    [key: string]: number;
+  };
+  /**
+   * Used
+   *
+   * Facts the agent declared it actually based the answer on, by fact type.
+   */
+  used?: {
+    [key: string]: number;
+  };
+};
+
+/**
  * MentalModelListResponse
  *
  * Response model for listing mental models.
@@ -2749,6 +3278,180 @@ export type MentalModelListResponse = {
    * Items
    */
   items: Array<MentalModelResponse>;
+  /**
+   * Total
+   *
+   * Total number of mental models matching the filter (not just this page)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Page size that was applied
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset that was applied
+   */
+  offset: number;
+};
+
+/**
+ * MentalModelRefreshScope
+ *
+ * The memory scope a refresh actually resolved to.
+ *
+ * A model's stored ``tags`` are not what filters memories — ``tags_match``
+ * defaults to ``all_strict`` when tags are present, and ``tag_groups``
+ * override flat tags entirely. This reports the resolved result.
+ */
+export type MentalModelRefreshScope = {
+  /**
+   * Tags
+   *
+   * Flat tags used to filter memories (null when unused).
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * Resolved tag match mode.
+   */
+  tags_match: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  /**
+   * Tag Groups
+   *
+   * Compound tag expressions used instead of flat tags, when set.
+   */
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
+  > | null;
+  /**
+   * Fact Types
+   *
+   * Fact types retrieved (null means all).
+   */
+  fact_types?: Array<string> | null;
+  /**
+   * Exclude Mental Models
+   *
+   * Whether other mental models were excluded from the reflect loop.
+   */
+  exclude_mental_models: boolean;
+  /**
+   * Exclude Mental Model Ids
+   *
+   * Mental models excluded by ID (always includes the model being refreshed).
+   */
+  exclude_mental_model_ids?: Array<string>;
+};
+
+/**
+ * MentalModelRefreshTrace
+ *
+ * Execution trace of a mental model refresh, recorded when trigger.keep_trace is on.
+ *
+ * Deliberately shaped like reflect's trace — the calls the agent made, plus the
+ * refresh-specific decision — and nothing more. This is persisted on the mental
+ * model row and re-read on every fetch, so anything derivable from elsewhere is
+ * left out: the evidence lives in ``reflect_response.based_on``, and the
+ * resolved scope and snapshot window are reported by the dry run.
+ */
+export type MentalModelRefreshTrace = {
+  /**
+   * Recorded At
+   *
+   * When this trace was recorded.
+   */
+  recorded_at?: string | null;
+  /**
+   * Effective Mode
+   *
+   * Whether the refresh ran as full or delta.
+   */
+  effective_mode: "full" | "delta";
+  /**
+   * Mode Fallback Reason
+   *
+   * Why delta was requested but not applied, if that happened.
+   */
+  mode_fallback_reason?:
+    | "no_baseline_content"
+    | "source_query_changed"
+    | "structured_doc_unreadable"
+    | "delta_ops_failed"
+    | "delta_ops_all_skipped"
+    | null;
+  /**
+   * Outcome
+   *
+   * What the refresh did with the document.
+   */
+  outcome:
+    | "content_written"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied";
+  /**
+   * Tool Calls
+   *
+   * Reflect tool calls made during the refresh.
+   */
+  tool_calls?: Array<MentalModelTraceToolCall>;
+  /**
+   * Llm Calls
+   *
+   * LLM calls made during the refresh.
+   */
+  llm_calls?: Array<LlmCallTrace>;
+  /**
+   * Structured operations emitted, in delta mode.
+   */
+  delta_operations?: MentalModelDeltaOperations | null;
+  /**
+   * Token usage across the refresh's LLM calls.
+   */
+  usage?: TokenUsage | null;
+  /**
+   * Duration Ms
+   *
+   * Wall-clock duration of the refresh.
+   */
+  duration_ms?: number;
+  /**
+   * Warnings
+   *
+   * Conditions worth a human's attention, in plain language.
+   */
+  warnings?: Array<string>;
+};
+
+/**
+ * MentalModelRefreshWindow
+ *
+ * The time window a refresh read memories from.
+ */
+export type MentalModelRefreshWindow = {
+  /**
+   * Created After
+   *
+   * Lower bound on when a memory last changed. Set only in delta mode, where it is the model's last_memory_seen_at — so a delta refresh only sees memories written or edited since the newest one the previous refresh saw.
+   */
+  created_after?: string | null;
+  /**
+   * Created Before
+   *
+   * Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.
+   */
+  created_before: string;
+  /**
+   * Watermark
+   *
+   * The last_memory_seen_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible.
+   */
+  watermark?: string | null;
 };
 
 /**
@@ -2790,8 +3493,16 @@ export type MentalModelResponse = {
   trigger?: MentalModelTriggerOutput | null;
   /**
    * Last Refreshed At
+   *
+   * When a refresh last finished for this model — wall-clock, in ISO format. Advances on every refresh that completes, including one that found nothing new and preserved the content, and on a direct edit of `content`. A refresh that failed leaves it alone. This is the field to answer 'have I already refreshed this?'; it says nothing about whether the model is behind the data, which is `last_memory_seen_at` / `is_stale`.
    */
   last_refreshed_at?: string | null;
+  /**
+   * Last Memory Seen At
+   *
+   * How far through the bank's memories this model is written — the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. Compare against `last_memory_write_at` from GET /stats to flag a whole list cheaply: at or after it means up to date, older means it may need a refresh. Null for a model no refresh has stamped yet.
+   */
+  last_memory_seen_at?: string | null;
   /**
    * Created At
    */
@@ -2807,9 +3518,75 @@ export type MentalModelResponse = {
   /**
    * Is Stale
    *
-   * True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full.
+   * True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full — never when listing. For a whole list, compare each `last_memory_seen_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh.
    */
   is_stale?: boolean | null;
+};
+
+/**
+ * MentalModelTraceToolCall
+ *
+ * One reflect tool call made during a refresh.
+ *
+ * ``output`` is carried only by the dry run, which persists nothing. The trace
+ * stored on the model row keeps ``result_count`` instead: it is re-read on every
+ * fetch, so embedding full recall payloads there would bloat the row without
+ * bound. Raw prompts and responses are available separately via LLM request
+ * tracing.
+ */
+export type MentalModelTraceToolCall = {
+  /**
+   * Tool
+   *
+   * Tool name: recall, search_observations, get_mental_model, expand, …
+   */
+  tool: string;
+  /**
+   * Reason
+   *
+   * The agent's stated reason for the call.
+   */
+  reason?: string | null;
+  /**
+   * Input
+   *
+   * Tool input parameters.
+   */
+  input?: {
+    [key: string]: unknown;
+  };
+  /**
+   * Output
+   *
+   * What the tool returned. Present on a dry run, which stores nothing; omitted from the trace persisted by a real refresh to keep that row bounded.
+   */
+  output?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Updated At
+   *
+   * The refresh window's lower bound as given to this call — the delta watermark. Named for what it actually filters: the predicate is on the memory's updated_at, so a memory merely touched since the last refresh qualifies. Null means the tool applies no time bound at all, so its results are not limited to the window (mental-model lookup and chunk expansion behave this way).
+   */
+  updated_at?: string | null;
+  /**
+   * Result Count
+   *
+   * Number of items the tool returned, when countable.
+   */
+  result_count?: number | null;
+  /**
+   * Duration Ms
+   *
+   * Execution time in milliseconds.
+   */
+  duration_ms: number;
+  /**
+   * Iteration
+   *
+   * Agent loop iteration (1-based) this call belongs to.
+   */
+  iteration?: number;
 };
 
 /**
@@ -2884,6 +3661,20 @@ export type MentalModelTriggerInput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Response Schema
+   *
+   * Optional JSON Schema for structured output. When set, each refresh runs the same structured-output extraction as reflect's response_schema and stores the parsed result under reflect_response.structured_output alongside the markdown content.
+   */
+  response_schema?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Keep Trace
+   *
+   * If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.
+   */
+  keep_trace?: boolean;
 };
 
 /**
@@ -2960,6 +3751,20 @@ export type MentalModelTriggerOutput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+  /**
+   * Response Schema
+   *
+   * Optional JSON Schema for structured output. When set, each refresh runs the same structured-output extraction as reflect's response_schema and stores the parsed result under reflect_response.structured_output alongside the markdown content.
+   */
+  response_schema?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Keep Trace
+   *
+   * If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.
+   */
+  keep_trace?: boolean;
 };
 
 /**
@@ -3109,6 +3914,12 @@ export type OperationResponse = {
    * Original filename for file-conversion operations (file_convert_retain); null for other task types.
    */
   filename?: string | null;
+  /**
+   * Mental Model Id
+   *
+   * Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed — `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`.
+   */
+  mental_model_id?: string | null;
   /**
    * Created At
    */
@@ -3352,6 +4163,12 @@ export type RecallResponse = {
   source_facts?: {
     [key: string]: RecallResult;
   } | null;
+  /**
+   * Source Facts Truncated
+   *
+   * Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts — the budget ran out, the references are not dangling. Only set when source facts were requested.
+   */
+  source_facts_truncated?: boolean | null;
 };
 
 /**
@@ -3655,19 +4472,19 @@ export type ReflectRequest = {
   /**
    * Tags
    *
-   * Filter memories by tags during reflection. If not specified, all memories are considered.
+   * Scope raw facts, observations, mental models, and tagged directives during reflection. With no tags, memory retrieval is unfiltered while only untagged/global directives are loaded. Use tags=[] with tags_match='exact' to select the untagged/global scope.
    */
   tags?: Array<string> | null;
   /**
    * Tags Match
    *
-   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**
    * Tag Groups
    *
-   * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
+   * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags.
    */
   tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
   /**
@@ -4206,9 +5023,15 @@ export type UpdateMemoryRequest = {
   /**
    * Entities
    *
-   * Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged.
+   * Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged.
    */
   entities?: Array<string> | null;
+  /**
+   * Resolve Entities
+   *
+   * Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
+   */
+  resolve_entities?: boolean;
   /**
    * State
    *
@@ -4286,6 +5109,10 @@ export type UpdateNodeRequest = {
    * Max Tokens
    */
   max_tokens?: number | null;
+  /**
+   * Refresh settings to change. Applied as a patch: only the fields present in this object are updated, and the rest keep the page's current values — so moving a page onto a schedule does not reset how it refreshes. Setting refresh_cron clears refresh_after_consolidation and vice versa, since a page refreshes on one or the other, never both.
+   */
+  trigger?: MentalModelTriggerInput | null;
 };
 
 /**
@@ -4550,6 +5377,36 @@ export type HealthEndpointHealthGetResponses = {
    */
   200: unknown;
 };
+
+export type GetReadinessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/health/ready";
+};
+
+export type GetReadinessResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type GetLivenessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/health/live";
+};
+
+export type GetLivenessResponses = {
+  /**
+   * Successful Response
+   */
+  200: LivenessResponse;
+};
+
+export type GetLivenessResponse = GetLivenessResponses[keyof GetLivenessResponses];
 
 export type GetVersionData = {
   body?: never;
@@ -4957,7 +5814,26 @@ export type ListBanksData = {
     authorization?: string | null;
   };
   path?: never;
-  query?: never;
+  query?: {
+    /**
+     * Q
+     *
+     * Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+     */
+    q?: string | null;
+    /**
+     * Limit
+     *
+     * Maximum number of banks to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks";
 };
 
@@ -5593,6 +6469,48 @@ export type RefreshMentalModelResponses = {
 export type RefreshMentalModelResponse =
   RefreshMentalModelResponses[keyof RefreshMentalModelResponses];
 
+export type DryRunRefreshMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Mental Model Id
+     */
+    mental_model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh";
+};
+
+export type DryRunRefreshMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DryRunRefreshMentalModelError =
+  DryRunRefreshMentalModelErrors[keyof DryRunRefreshMentalModelErrors];
+
+export type DryRunRefreshMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelDryRunRefreshResult;
+};
+
+export type DryRunRefreshMentalModelResponse =
+  DryRunRefreshMentalModelResponses[keyof DryRunRefreshMentalModelResponses];
+
 export type ClearMentalModelData = {
   body?: never;
   headers?: {
@@ -5970,13 +6888,13 @@ export type ListDirectivesData = {
     /**
      * Tags
      *
-     * Filter by tags
+     * Filter directives by execution scope. Omit or pass [] to list all directives.
      */
     tags?: Array<string> | null;
     /**
      * Tags Match
      *
-     * How to match tags
+     * How tagged directives match the requested scope. Untagged/global directives are included.
      */
     tags_match?: "any" | "all" | "exact";
     /**
@@ -7080,7 +7998,7 @@ export type ExportBankTemplateResponses = {
 export type ExportBankTemplateResponse =
   ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
 
-export type ExportDocumentsData = {
+export type ExportDocumentsSyncRemovedData = {
   body?: never;
   headers?: {
     /**
@@ -7094,35 +8012,23 @@ export type ExportDocumentsData = {
      */
     bank_id: string;
   };
-  query?: {
-    /**
-     * Document Id
-     *
-     * Document id(s) to export; omit for all
-     */
-    document_id?: Array<string> | null;
-    /**
-     * Include Observations
-     *
-     * Also export consolidated observations (restored on import)
-     */
-    include_observations?: boolean;
-  };
+  query?: never;
   url: "/v1/default/banks/{bank_id}/document-transfer";
 };
 
-export type ExportDocumentsErrors = {
+export type ExportDocumentsSyncRemovedErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+export type ExportDocumentsSyncRemovedError =
+  ExportDocumentsSyncRemovedErrors[keyof ExportDocumentsSyncRemovedErrors];
 
-export type ExportDocumentsResponses = {
+export type ExportDocumentsSyncRemovedResponses = {
   /**
-   * Transfer archive
+   * Successful Response
    */
   200: unknown;
 };
@@ -7169,6 +8075,89 @@ export type ImportDocumentsResponses = {
 };
 
 export type ImportDocumentsResponse = ImportDocumentsResponses[keyof ImportDocumentsResponses];
+
+export type ExportDocumentsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Document Id
+     *
+     * Document id(s) to export; omit for all
+     */
+    document_id?: Array<string> | null;
+    /**
+     * Include Observations
+     *
+     * Also export consolidated observations (restored on import; whole-bank only)
+     */
+    include_observations?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer/export";
+};
+
+export type ExportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+
+export type ExportDocumentsResponses = {
+  /**
+   * Successful Response
+   */
+  202: DocumentExportSubmitResponse;
+};
+
+export type ExportDocumentsResponse = ExportDocumentsResponses[keyof ExportDocumentsResponses];
+
+export type DownloadFileData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Key
+     */
+    key: string;
+  };
+  query?: never;
+  url: "/v1/default/files/download/{key}";
+};
+
+export type DownloadFileErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DownloadFileError = DownloadFileErrors[keyof DownloadFileErrors];
+
+export type DownloadFileResponses = {
+  /**
+   * Stored file
+   */
+  200: unknown;
+};
 
 export type GetBankTemplateSchemaData = {
   body?: never;

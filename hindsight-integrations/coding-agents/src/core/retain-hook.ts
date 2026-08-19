@@ -15,11 +15,18 @@ import { readFileSync } from "node:fs";
 import { deriveBankId } from "./bank";
 import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
+import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
-import { log, setLogLevel } from "./log";
+import { describeError, log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
+import type { RetainCursorStore } from "./retain-cursor";
+import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
+import { fileCursorStore, sessionRootDir } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
+
+/** Headroom left before the host's kill: the response still has to come back after the last wait. */
+const HOST_DEADLINE_MARGIN_MS = 2000;
 import type { TransportTurn } from "./chat";
 
 export interface RetainHookEventFields {
@@ -35,15 +42,23 @@ export type TranscriptReader = (path: string) => TransportTurn[];
 export interface RetainHookSpec {
   /** Harness name — config `harnesses.<name>` section, {harness} template field, diag records. */
   harness: string;
+  /** Seconds the HOST allows this hook before killing it — the same number the installer writes
+   *  into its hook registration. It varies (60s for Claude Code and Codex, 30s for Cursor and
+   *  Antigravity), and it is the only honest basis for deciding how long a rate-limited write-back
+   *  may wait: past it the process is killed mid-write, which is worse than deferring. */
+  hostTimeoutSec: number;
   /** Read the fields out of the harness's stdin event (shapes differ per harness). */
   parse(event: Record<string, unknown>): RetainHookEventFields;
   /** Harness-specific transcript parser. Defaults to the Claude JSONL reader. */
   readTranscript?: TranscriptReader;
 }
 
-/** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. */
+/** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
+ *  capability probe is part of the contract: appending to a document is only safe against a server
+ *  that can deduplicate a resubmitted write (see core/retain-cursor.ts). */
 interface RetainClient {
   retain: HindsightClient["retain"];
+  supportsIdempotentRetain: HindsightClient["supportsIdempotentRetain"];
 }
 
 /**
@@ -57,6 +72,12 @@ export async function buildRetain(args: {
   transcriptPath: string;
   client: RetainClient;
   readTranscript?: TranscriptReader;
+  /** Configured retainTags/retainMetadata, already resolved for this session (core/retain-stamp.ts). */
+  stamp?: RetainStamp;
+  /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
+  cursors?: RetainCursorStore;
+  /** Absolute time the host will kill this process; bounds any rate-limit retry. */
+  retryUntil?: number;
 }): Promise<void> {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
@@ -67,15 +88,19 @@ export async function buildRetain(args: {
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
   try {
-    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness);
+    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness, {
+      cursors: args.cursors ?? fileCursorStore(harness),
+      stamp: args.stamp,
+      retryUntil: args.retryUntil,
+    });
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
     log.warn(harness, "session write-back failed", {
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error: describeError(e),
     });
     diag(harness, "retain_failed", {
       ms: Date.now() - t0,
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error: describeError(e),
       session: sessionId,
     });
   }
@@ -89,6 +114,9 @@ export async function runRetainHook(
   // Anti-recursion: the codebase survey's own headless claude session (core/survey.ts) sets this
   // so its hooks are a no-op — it must not retain its own survey session's transcript.
   if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
+  // The host started counting when it spawned us, which is near enough to now: everything above
+  // is synchronous. A margin keeps the kill from landing between our last wait and its response.
+  const hostDeadline = Date.now() + spec.hostTimeoutSec * 1000 - HOST_DEADLINE_MARGIN_MS;
 
   let ev: Record<string, unknown> = {};
   try {
@@ -105,11 +133,24 @@ export async function runRetainHook(
 
   if (!transcriptPath) return;
 
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness));
+  const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
+  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) return;
-  const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+  // Last chance to get the daemon up: this is the write path, and a session whose daemon never
+  // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
+  // any hook and nothing is waiting on its result, so it can afford the longer wait.
+  // Deliberately NOT gated on the result — retain proceeds either way, so an unreachable daemon
+  // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
+  await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
+  const client = makeClient({
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
+    observationScopes: cfg.observationScopes,
+  });
 
   await buildRetain({
     harness: spec.harness,
@@ -117,5 +158,13 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
+    retryUntil: hostDeadline,
+    stamp: buildRetainStamp(cfg, {
+      directory: cwd,
+      sessionRoot,
+      harness: spec.harness,
+      bankId,
+      sessionId: sessionId || "no-session",
+    }),
   });
 }

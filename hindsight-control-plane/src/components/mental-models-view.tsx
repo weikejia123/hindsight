@@ -65,6 +65,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { ResponseSchemaField } from "./response-schema-field";
 import { TagFilterInput } from "./tag-filter-input";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
@@ -102,6 +103,8 @@ interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    response_schema?: Record<string, unknown>;
+    keep_trace?: boolean;
   };
   last_refreshed_at: string;
   created_at: string;
@@ -155,22 +158,11 @@ export function MentalModelsView() {
 
     setLoading(true);
     try {
-      // The API caps each response at PAGE_SIZE, so page through until a short
-      // page is returned to load every mental model for this bank.
-      const PAGE_SIZE = 100;
-      const all: MentalModel[] = [];
-      for (let offset = 0; ; offset += PAGE_SIZE) {
-        const page = await client.listMentalModels(
-          currentBank,
-          selectedTags.length > 0 ? selectedTags : undefined,
-          selectedTags.length > 0 ? tagsMatch : undefined,
-          PAGE_SIZE,
-          offset
-        );
-        const items = page.items || [];
-        all.push(...items);
-        if (items.length < PAGE_SIZE) break;
-      }
+      // The API caps each response, so page through to the reported total.
+      const all = await client.listAllMentalModels(currentBank, {
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
+      });
       setMentalModels(all);
     } catch (error) {
       console.error("Error loading mental models:", error);
@@ -711,6 +703,8 @@ function CreateMentalModelDialog({
     includeChunks: "" as "" | "true" | "false",
     recallMaxTokens: "",
     recallChunksMaxTokens: "",
+    responseSchema: "",
+    keepTrace: false,
   });
 
   const handleCreate = async () => {
@@ -750,6 +744,12 @@ function CreateMentalModelDialog({
       const includeChunks =
         form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
 
+      // response_schema is only ever set through the schema builder, which
+      // guarantees valid, usable JSON.
+      const responseSchema = form.responseSchema.trim()
+        ? JSON.parse(form.responseSchema.trim())
+        : undefined;
+
       await client.createMentalModel(currentBank, {
         id: form.id.trim() || undefined,
         name: form.name.trim(),
@@ -769,6 +769,8 @@ function CreateMentalModelDialog({
           include_chunks: includeChunks,
           recall_max_tokens: recallMaxTokens,
           recall_chunks_max_tokens: recallChunksMaxTokens,
+          response_schema: responseSchema,
+          keep_trace: form.keepTrace,
         },
       });
 
@@ -789,6 +791,8 @@ function CreateMentalModelDialog({
         includeChunks: "",
         recallMaxTokens: "",
         recallChunksMaxTokens: "",
+        responseSchema: "",
+        keepTrace: false,
       });
       onCreated();
     } catch (error) {
@@ -820,6 +824,8 @@ function CreateMentalModelDialog({
             includeChunks: "",
             recallMaxTokens: "",
             recallChunksMaxTokens: "",
+            responseSchema: "",
+            keepTrace: false,
           });
           onClose();
         }
@@ -1120,6 +1126,30 @@ function CreateMentalModelDialog({
                     {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
+                <ResponseSchemaField
+                  value={form.responseSchema}
+                  onChange={(json) => setForm({ ...form, responseSchema: json })}
+                />
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTroubleshooting")}
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="create-keep-trace"
+                    checked={form.keepTrace}
+                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
+                  />
+                  <label
+                    htmlFor="create-keep-trace"
+                    className="text-sm font-medium text-foreground cursor-pointer"
+                  >
+                    {t("optionsKeepTraceLabel")}
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
               </section>
             </TabsContent>
           </div>
@@ -1197,6 +1227,10 @@ function UpdateMentalModelDialog({
       mentalModel.trigger?.recall_chunks_max_tokens != null
         ? String(mentalModel.trigger.recall_chunks_max_tokens)
         : "",
+    responseSchema: mentalModel.trigger?.response_schema
+      ? JSON.stringify(mentalModel.trigger.response_schema, null, 2)
+      : "",
+    keepTrace: mentalModel.trigger?.keep_trace || false,
   });
   const [form, setForm] = useState(buildFormState);
 
@@ -1243,6 +1277,12 @@ function UpdateMentalModelDialog({
       const includeChunks =
         form.includeChunks === "true" ? true : form.includeChunks === "false" ? false : undefined;
 
+      // response_schema is only ever set through the schema builder, which
+      // guarantees valid, usable JSON.
+      const responseSchema = form.responseSchema.trim()
+        ? JSON.parse(form.responseSchema.trim())
+        : undefined;
+
       const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
@@ -1261,6 +1301,8 @@ function UpdateMentalModelDialog({
           include_chunks: includeChunks,
           recall_max_tokens: recallMaxTokens,
           recall_chunks_max_tokens: recallChunksMaxTokens,
+          response_schema: responseSchema,
+          keep_trace: form.keepTrace,
         },
       });
 
@@ -1566,6 +1608,30 @@ function UpdateMentalModelDialog({
                     {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
+                <ResponseSchemaField
+                  value={form.responseSchema}
+                  onChange={(json) => setForm({ ...form, responseSchema: json })}
+                />
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTroubleshooting")}
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-keep-trace"
+                    checked={form.keepTrace}
+                    onCheckedChange={(checked) => setForm({ ...form, keepTrace: checked === true })}
+                  />
+                  <label
+                    htmlFor="edit-keep-trace"
+                    className="text-sm font-medium text-foreground cursor-pointer"
+                  >
+                    {t("optionsKeepTraceLabel")}
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("optionsKeepTraceDescription")}</p>
               </section>
             </TabsContent>
           </div>
