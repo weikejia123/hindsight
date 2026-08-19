@@ -260,6 +260,10 @@ docker build \
 - `HINDSIGHT_API_LLM_PROVIDER=openai`、`HINDSIGHT_API_LLM_BASE_URL=https://api.minimaxi.com/v1`、`HINDSIGHT_API_LLM_MODEL=MiniMax-M2.7`（绕开上游 minimax provider 写死 `api.minimax.io` 缺 i）；
 - `HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai`、`HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://host.docker.internal:11434/v1`、`HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=bge-m3`（宿主机 Ollama）；
 - **`HINDSIGHT_API_RERANKER_PROVIDER=rrf`**（新版默认 reranker 为 local，但 `INCLUDE_LOCAL_MODELS=false` 未打包 sentence-transformers 且无 TEI；新版**不支持 none**，用 `rrf` 纯算法融合实现无模型重排序）；
+- **LLM 稳定性调优（20260819 实际应用）**：因 MiniMax M2.7 生成慢（30-60 token/s）且大输出多，调高超时+降并发——
+  - `HINDSIGHT_API_LLM_TIMEOUT: 600`（120s->600s，容纳 reflect/consolidation 的大输出）
+  - `HINDSIGHT_API_WORKER_MAX_SLOTS: 3`（10->3，降低并发排队，避免互相拖到超时）
+  - `HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY: 2`（8->2，缓解 mental-model 刷新抢 LLM）
 - `HINDSIGHT_API_DATABASE_URL=postgresql://hindsight_user:${HINDSIGHT_DB_PASSWORD}@db:5432/hindsight_db`；
 - `HINDSIGHT_API_HOST=0.0.0.0`、`HINDSIGHT_API_PORT=8888`、`LOG_LEVEL=info`、`WORKER_ID=hindsight-app`（重建后遗留任务可恢复）；
 - `HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888`；
@@ -323,6 +327,7 @@ docker compose start hindsight-db
 7. **升级前置备份**：任何镜像/迁移操作前先 `pg_dump`。
 8. **复现锁定**：代码锁定 `wkj-dev` 记录时 commit，镜像 tag、compose、`.env`、build args 一致即可任意复现。
 9. **Reranker 必须 `rrf`**：新版 config 默认 `local`，但 `INCLUDE_LOCAL_MODELS=false` 未打包本地 ML；`none` 不被支持（cross_encoder 会抛 ValueError）。无本地/无 TEI 时必须设 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`。
+10. **MiniMax LLM 稳定性调优**：MiniMax M2.7 生成仅 30-60 token/s；短请求 ~1s、大输出（3-4k token）需 23-70s。`HINDSIGHT_API_LLM_TIMEOUT=600`（防大输出超时）、`HINDSIGHT_API_WORKER_MAX_SLOTS=3`、`HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY=2`（防并发排队）。reflect（深度记忆）单次 50-90s 属正常范围（多轮 agent 循环 + 长 final 回答，受生成速度硬约束）；如需提速可设 `HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS` 等（会牺牲深度/篇幅）。
 
 ---
 
