@@ -259,6 +259,7 @@ docker build \
 - 镜像 `hindsight-local:v0.9.x-wkj`（升级后 tag；当前运行 `v0.8.6-wkj`），容器 `hindsight-app`；端口 `8888`/`9999`；
 - `HINDSIGHT_API_LLM_PROVIDER=openai`、`HINDSIGHT_API_LLM_BASE_URL=https://api.minimaxi.com/v1`、`HINDSIGHT_API_LLM_MODEL=MiniMax-M2.7`（绕开上游 minimax provider 写死 `api.minimax.io` 缺 i）；
 - `HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai`、`HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://host.docker.internal:11434/v1`、`HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=bge-m3`（宿主机 Ollama）；
+- **`HINDSIGHT_API_RERANKER_PROVIDER=rrf`**（新版默认 reranker 为 local，但 `INCLUDE_LOCAL_MODELS=false` 未打包 sentence-transformers 且无 TEI；新版**不支持 none**，用 `rrf` 纯算法融合实现无模型重排序）；
 - `HINDSIGHT_API_DATABASE_URL=postgresql://hindsight_user:${HINDSIGHT_DB_PASSWORD}@db:5432/hindsight_db`；
 - `HINDSIGHT_API_HOST=0.0.0.0`、`HINDSIGHT_API_PORT=8888`、`LOG_LEVEL=info`、`WORKER_ID=hindsight-app`（重建后遗留任务可恢复）；
 - `HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888`；
@@ -321,6 +322,7 @@ docker compose start hindsight-db
 6. **迁移是闭链可自动**：新镜像首启自动升到 `f2a7c9d4b168`；生产更稳妥是先手动 `run-db-migration` 再切换。
 7. **升级前置备份**：任何镜像/迁移操作前先 `pg_dump`。
 8. **复现锁定**：代码锁定 `wkj-dev` 记录时 commit，镜像 tag、compose、`.env`、build args 一致即可任意复现。
+9. **Reranker 必须 `rrf`**：新版 config 默认 `local`，但 `INCLUDE_LOCAL_MODELS=false` 未打包本地 ML；`none` 不被支持（cross_encoder 会抛 ValueError）。无本地/无 TEI 时必须设 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`。
 
 ---
 
